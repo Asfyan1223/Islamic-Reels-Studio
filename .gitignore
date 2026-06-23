@@ -1,0 +1,39 @@
+# ---------------------------------------------
+# 1. Compiled Code & PyInstaller Builds
+# ---------------------------------------------
+__pycache__/
+build/
+dist/
+InstallerOutput/
+*.exe
+*.spec
+
+# ---------------------------------------------
+# 2. Temporary Files & Outputs
+# ---------------------------------------------
+temp/
+temp_cache/
+lf_temp/
+output/
+last_bg_index.txt
+last_rendered_video.txt
+recovered_*
+
+# ---------------------------------------------
+# 3. Security & Credentials (NEVER UPLOAD THESE)
+# ---------------------------------------------
+credentials/
+credentials.zip
+*.json
+*.pem
+
+# ---------------------------------------------
+# 4. Heavy Media Assets (The cause of the 217MB crash)
+# ---------------------------------------------
+Assest/
+backgrounds/
+font/
+reciter_clips/
+reciter_photos/
+resoursce/
+sound_effects/
