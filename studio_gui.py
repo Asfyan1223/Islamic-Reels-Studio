@@ -1358,11 +1358,20 @@ class IslamicReelsStudio(ctk.CTk):
             
             token_appdata = os.path.join(app_data_dir, "token.json")
             if os.path.exists(token_appdata):
-                try: shutil.copy2(token_appdata, os.path.join(creds_vault_dir, target_prof, "token.json"))
-                except: pass
+                try: 
+                    shutil.copy2(token_appdata, os.path.join(creds_vault_dir, target_prof, "token.json"))
+                    os.remove(token_appdata)
+                    print(f"   > 🛡️ [VAULT] Staged token.json from AppData to profile '{target_prof}' and cleared root.")
+                except Exception as e:
+                    print(f"   > ⚠️ Warning: Failed to stage AppData token.json: {e}")
+                    
             if os.path.exists("token.json"):
-                try: shutil.copy2("token.json", os.path.join(creds_vault_dir, target_prof, "token.json"))
-                except: pass
+                try: 
+                    shutil.copy2("token.json", os.path.join(creds_vault_dir, target_prof, "token.json"))
+                    os.remove("token.json")
+                    print(f"   > 🛡️ [VAULT] Staged token.json from CWD to profile '{target_prof}' and cleared root.")
+                except Exception as e:
+                    print(f"   > ⚠️ Warning: Failed to stage CWD token.json: {e}")
             
             print("   > 🧹 Sweeping RAM and clearing memory cache for next loop...")
             sequence_data.clear() 
