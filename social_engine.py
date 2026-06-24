@@ -9,6 +9,12 @@ import socket
 # Force the server to drop dead connections after 5 minutes (300 seconds)
 socket.setdefaulttimeout(300)
 
+if getattr(sys, 'frozen', False):
+    install_dir = os.path.dirname(sys.executable)
+else:
+    install_dir = os.path.dirname(os.path.abspath(__file__))
+app_data_dir = os.path.join(os.environ.get('APPDATA', ''), 'IslamicReelsStudio')
+
 def get_meta_server_time():
     try:
         res = requests.get("https://worldtimeapi.org/api/timezone/Etc/UTC", timeout=5).json()
@@ -34,7 +40,7 @@ def check_server_status(settings):
         except:
             statuses["facebook"] = "🌐 Network Error"
             
-    if os.path.exists("client_secret.json"):
+    if os.path.exists(os.path.join(install_dir, "client_secret.json")) or os.path.exists("client_secret.json"):
         statuses["youtube"] = "✅ OAuth File Found"
         
     return statuses
@@ -113,9 +119,10 @@ def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=No
     # Load credentials if missing
     if not ig_id or not token:
         import json
-        if os.path.exists("settings.json"):
+        settings_path = os.path.join(app_data_dir, "settings.json")
+        if os.path.exists(settings_path):
             try:
-                with open("settings.json", "r") as f:
+                with open(settings_path, "r") as f:
                     settings_data = json.load(f)
                     for profile_settings in settings_data.values():
                         if not ig_id and profile_settings.get("ig_account_id"):
@@ -210,10 +217,13 @@ def get_authenticated_youtube_service(token_path):
             client_secret_path = os.path.join(profile_dir, 'client_secret.json') if profile_dir else 'client_secret.json'
             
             if not os.path.exists(client_secret_path):
-                if os.path.exists('client_secret.json'):
+                main_secret_path = os.path.join(install_dir, 'client_secret.json')
+                if os.path.exists(main_secret_path):
+                    client_secret_path = main_secret_path
+                elif os.path.exists('client_secret.json'):
                     client_secret_path = 'client_secret.json'
                 else:
-                    print(f"   > ❌ YT Error: Missing client_secret.json in profile vault ({client_secret_path}) or main directory!")
+                    print(f"   > ❌ YT Error: Missing client_secret.json in profile vault ({client_secret_path}) or main directory ({main_secret_path})!")
                     return None
             print("   > 🌍 Opening browser for Google Authentication...")
             flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
@@ -311,6 +321,26 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
     print(f"📡 Meta Server Time: {get_meta_server_time()[0]}")
     print("========================================")
 
+    # Load global settings for logging comparison
+    global_enable_ig = settings.get("enable_ig", True)
+    global_enable_fb = settings.get("enable_fb", True)
+    global_enable_yt = settings.get("enable_yt", True)
+    
+    current_profile = settings.get("current_profile_name")
+    if current_profile:
+        settings_path = os.path.join(app_data_dir, "settings.json")
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, "r") as f:
+                    s_data = json.load(f)
+                    prof_data = s_data.get(current_profile)
+                    if prof_data:
+                        global_enable_ig = prof_data.get("enable_ig", True)
+                        global_enable_fb = prof_data.get("enable_fb", True)
+                        global_enable_yt = prof_data.get("enable_yt", True)
+            except:
+                pass
+
     # Staging Engine
     thumb_url = None
     if thumbnail_path:
@@ -318,9 +348,9 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         thumb_url = get_temp_url(thumbnail_path)
     elif settings.get("auto_thumbnail", False):
         import glob, random
-        thumb_folder = "reciter_photos"
+        thumb_folder = os.path.join(install_dir, "reciter_photos")
         if os.path.exists(thumb_folder):
-            photos = glob.glob(f"{thumb_folder}/*.jpg") + glob.glob(f"{thumb_folder}/*.png")
+            photos = glob.glob(os.path.join(thumb_folder, "*.jpg")) + glob.glob(os.path.join(thumb_folder, "*.png"))
             if photos:
                 selected_photo = random.choice(photos)
                 print(f"   > 🖼️ Uploading Thumbnail: {os.path.basename(selected_photo)}")
@@ -332,12 +362,15 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
     # 1. Facebook
     if abort_check and not abort_check(): return
     if settings.get("enable_fb", True):
-        if settings.get("fb_token") and settings.get("fb_page_id"):
+        if settings.get("fb_page_id") and settings.get("fb_token"):
             upload_to_facebook(video_path, caption, settings["fb_page_id"], settings["fb_token"])
         else:
             print("   > ⏭️ Skipping Facebook (Missing Token or Page ID)")
     else:
-        print("   > ⏭️ Skipping Facebook (Turned off in settings)")
+        if global_enable_fb:
+            print("   > ⏭️ Skipping Facebook (Not targeted for this variant)")
+        else:
+            print("   > ⏭️ Skipping Facebook (Turned off in settings)")
 
     # 2. Instagram
     if abort_check and not abort_check(): return
@@ -348,7 +381,10 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         else:
             print("   > ⏭️ Skipping Instagram (Missing Token or IG ID)")
     else:
-        print("   > ⏭️ Skipping Instagram (Turned off in settings)")
+        if global_enable_ig:
+            print("   > ⏭️ Skipping Instagram (Not targeted for this variant)")
+        else:
+            print("   > ⏭️ Skipping Instagram (Turned off in settings)")
 
     # 3. YouTube
     if abort_check and not abort_check(): return
@@ -357,15 +393,13 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         yt_title = f"Beautiful Quran Recitation - {clean_yt_ref} ✨"
         
         current_profile = settings.get("current_profile_name", "Main Page")
-        if getattr(sys, 'frozen', False):
-            install_dir = os.path.dirname(sys.executable)
-        else:
-            install_dir = os.path.dirname(os.path.abspath(__file__))
-            
         profile_yt_token = os.path.join(install_dir, "credentials", current_profile, "token.json")
         
         upload_to_youtube(video_path, yt_title, caption, profile_yt_token)
     else:
-        print("   > ⏭️ Skipping YouTube (Turned off in settings)")
+        if global_enable_yt:
+            print("   > ⏭️ Skipping YouTube (Not targeted for this variant)")
+        else:
+            print("   > ⏭️ Skipping YouTube (Turned off in settings)")
 
     print("========================================")

@@ -35,8 +35,8 @@ os.chdir(app_data_dir)
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")
 
-SETTINGS_FILE = "settings.json"
-LAST_VIDEO_FILE = "last_rendered_video.json"
+SETTINGS_FILE = os.path.join(app_data_dir, "settings.json")
+LAST_VIDEO_FILE = os.path.join(app_data_dir, "last_rendered_video.json")
 
 CARD_BG = "#212325"
 BG_COLOR = "#18191A"
@@ -243,11 +243,13 @@ class IslamicReelsStudio(ctk.CTk):
         
         for file in ["client_secret.json", "sheets_secret.json"]:
             src = os.path.join(prof_dir, file)
-            dst = file 
+            dst = os.path.join(app_data_dir, file) 
             if os.path.exists(src):
                 shutil.copy2(src, dst)
             else:
-                if os.path.exists(dst): os.remove(dst)
+                if os.path.exists(dst):
+                    try: os.remove(dst)
+                    except: pass
 
     def cleanup_root_clutter(self):
         """Cleans up debug/temporary files in the root directory (recovered_*, *.mp3, *.srt)"""
@@ -520,7 +522,7 @@ class IslamicReelsStudio(ctk.CTk):
         self.after(0, update_labels)
 
     def trigger_manual_upload(self):
-        last_video_file = f"last_rendered_video_{self.active_profile}.json"
+        last_video_file = os.path.join(app_data_dir, f"last_rendered_video_{self.active_profile}.json")
         if os.path.exists(last_video_file):
             try:
                 with open(last_video_file, "r") as f:
@@ -544,9 +546,9 @@ class IslamicReelsStudio(ctk.CTk):
                             
                             reciter_name = prof_settings.get("reciter_name", "Sheikh Husary (Safe)")
                             clean_reciter_name = reciter_name.replace(" (Safe)", "").replace(" (High Copyright Risk)", "")
-                            thumb_path = os.path.join("reciter_photos", f"{reciter_name}.jpg")
+                            thumb_path = os.path.join(install_dir, "reciter_photos", f"{reciter_name}.jpg")
                             if not os.path.exists(thumb_path):
-                                thumb_path = os.path.join("reciter_photos", f"{clean_reciter_name}.jpg")
+                                thumb_path = os.path.join(install_dir, "reciter_photos", f"{clean_reciter_name}.jpg")
                             if not os.path.exists(thumb_path):
                                 thumb_path = None
                                 
@@ -568,8 +570,10 @@ class IslamicReelsStudio(ctk.CTk):
             messagebox.showerror("Error", "No previous video record found.")
 
     def scan_fonts(self):
-        if not os.path.exists("font"): os.makedirs("font")
-        font_files = glob.glob("font/*.ttf")
+        font_dir = os.path.join(install_dir, "font")
+        if not os.path.exists(font_dir): 
+            os.makedirs(font_dir, exist_ok=True)
+        font_files = glob.glob(os.path.join(font_dir, "*.ttf"))
         if not font_files: return ["Default Windows Font (Arial/Tahoma)"]
         return [os.path.basename(f) for f in font_files]
 
@@ -1201,7 +1205,7 @@ class IslamicReelsStudio(ctk.CTk):
             if not prof_settings.get("eng_sub", True):
                 for item in sequence_data: item['eng_text'] = None
 
-            output_dir = "output"
+            output_dir = os.path.join(app_data_dir, "output")
             ig_dir = os.path.join(output_dir, "instagram")
             yt_dir = os.path.join(output_dir, "youtube")
             os.makedirs(ig_dir, exist_ok=True)
@@ -1217,13 +1221,13 @@ class IslamicReelsStudio(ctk.CTk):
                     except: pass
             
             selected_font = prof_settings.get("font", "Default Windows Font (Arial/Tahoma)")
-            final_font_path = r"C:\Windows\Fonts\tahoma.ttf" if selected_font == "Default Windows Font (Arial/Tahoma)" else os.path.join("font", selected_font)
+            final_font_path = r"C:\Windows\Fonts\tahoma.ttf" if selected_font == "Default Windows Font (Arial/Tahoma)" else os.path.join(install_dir, "font", selected_font)
             selected_sub_font = prof_settings.get("sub_font", selected_font)
-            final_sub_font_path = r"C:\Windows\Fonts\tahoma.ttf" if selected_sub_font == "Default Windows Font (Arial/Tahoma)" else os.path.join("font", selected_sub_font)
+            final_sub_font_path = r"C:\Windows\Fonts\tahoma.ttf" if selected_sub_font == "Default Windows Font (Arial/Tahoma)" else os.path.join(install_dir, "font", selected_sub_font)
             selected_eng_font = prof_settings.get("eng_font", selected_font)
-            final_eng_font_path = r"C:\Windows\Fonts\tahoma.ttf" if selected_eng_font == "Default Windows Font (Arial/Tahoma)" else os.path.join("font", selected_eng_font)
+            final_eng_font_path = r"C:\Windows\Fonts\tahoma.ttf" if selected_eng_font == "Default Windows Font (Arial/Tahoma)" else os.path.join(install_dir, "font", selected_eng_font)
             selected_ref_font = prof_settings.get("ref_font", selected_font)
-            final_ref_font_path = r"C:\Windows\Fonts\tahoma.ttf" if selected_ref_font == "Default Windows Font (Arial/Tahoma)" else os.path.join("font", selected_ref_font)
+            final_ref_font_path = r"C:\Windows\Fonts\tahoma.ttf" if selected_ref_font == "Default Windows Font (Arial/Tahoma)" else os.path.join(install_dir, "font", selected_ref_font)
             
             ig_style = prof_settings.get("ig_video_style", "Cinematic (Reciter + Fast Cuts)")
             yt_style = prof_settings.get("yt_video_style", "Traditional (Static Loop)")
@@ -1312,13 +1316,20 @@ class IslamicReelsStudio(ctk.CTk):
                 print("   > ❌ Pipeline aborted: Render completely failed.")
                 return False, None
             
-            last_video_file = f"last_rendered_video_{target_prof}.json"
+            last_video_file = os.path.join(app_data_dir, f"last_rendered_video_{target_prof}.json")
             with open(last_video_file, "w") as f:
                 json.dump(generated_paths, f)
                 
             audio_generator.cleanup_audio_files(sequence_data)
             cloud_log_text = f"{dynamic_ref} | [BG: {bg_name}]"
             
+            print(f"   > 🛡️ [DIAGNOSTIC] Instagram Active: {insta_active}, Facebook Active: {fb_active}, YouTube Active: {yt_active}")
+            print(f"   > 🛡️ [DIAGNOSTIC] Generated paths keys: {list(generated_paths.keys())}")
+            if 'ig' in generated_paths:
+                print(f"   > 🛡️ [DIAGNOSTIC] IG video path exists: {os.path.exists(generated_paths['ig'])} ({generated_paths['ig']})")
+            if 'yt' in generated_paths:
+                print(f"   > 🛡️ [DIAGNOSTIC] YT video path exists: {os.path.exists(generated_paths['yt'])} ({generated_paths['yt']})")
+                
             if prof_settings.get("auto_upload", False):
                 print("   > 🚀 Auto-Upload is ON. Pushing directly to servers...")
                 if 'ig' in generated_paths:
@@ -1329,9 +1340,9 @@ class IslamicReelsStudio(ctk.CTk):
                     
                     reciter_name = prof_settings.get("reciter_name", "Sheikh Husary (Safe)")
                     clean_reciter_name = reciter_name.replace(" (Safe)", "").replace(" (High Copyright Risk)", "")
-                    thumb_path = os.path.join("reciter_photos", f"{reciter_name}.jpg")
+                    thumb_path = os.path.join(install_dir, "reciter_photos", f"{reciter_name}.jpg")
                     if not os.path.exists(thumb_path):
-                        thumb_path = os.path.join("reciter_photos", f"{clean_reciter_name}.jpg")
+                        thumb_path = os.path.join(install_dir, "reciter_photos", f"{clean_reciter_name}.jpg")
                     if not os.path.exists(thumb_path):
                         thumb_path = None
                         
@@ -1345,9 +1356,13 @@ class IslamicReelsStudio(ctk.CTk):
             else:
                 print("   > ⏸️ Auto-Upload is OFF. Videos safely stored in output folders awaiting Manual Upload command.")
             
+            token_appdata = os.path.join(app_data_dir, "token.json")
+            if os.path.exists(token_appdata):
+                try: shutil.copy2(token_appdata, os.path.join(creds_vault_dir, target_prof, "token.json"))
+                except: pass
             if os.path.exists("token.json"):
-                import shutil 
-                shutil.copy2("token.json", os.path.join(creds_vault_dir, target_prof, "token.json"))
+                try: shutil.copy2("token.json", os.path.join(creds_vault_dir, target_prof, "token.json"))
+                except: pass
             
             print("   > 🧹 Sweeping RAM and clearing memory cache for next loop...")
             sequence_data.clear() 
