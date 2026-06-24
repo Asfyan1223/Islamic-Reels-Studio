@@ -5,9 +5,11 @@ from oauth2client.service_account import ServiceAccountCredentials
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timezone
 
-def get_sheet(sheet_url):
-    if not os.path.exists("sheets_secret.json"):
-        print("   > ❌ Sheets Error: 'sheets_secret.json' is physically missing from this profile's folder.")
+def get_sheet(sheet_url, creds_path=None):
+    if not creds_path:
+        creds_path = "sheets_secret.json"
+    if not os.path.exists(creds_path):
+        print(f"   > ❌ Sheets Error: '{creds_path}' is physically missing from this profile's folder.")
         return None
         
     if not sheet_url or "YOUR_" in sheet_url:
@@ -16,7 +18,7 @@ def get_sheet(sheet_url):
         
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("sheets_secret.json", scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
         client = gspread.authorize(creds)
         return client.open_by_url(sheet_url).sheet1
     except Exception as e:
@@ -38,8 +40,8 @@ def setup_headers(sheet):
             except Exception: pass
     except Exception: pass
 
-def get_last_post_time(sheet_url, post_type="QuranReel"):
-    sheet = get_sheet(sheet_url)
+def get_last_post_time(sheet_url, post_type="QuranReel", creds_path=None):
+    sheet = get_sheet(sheet_url, creds_path)
     if not sheet: return "API_ERROR"  # 🌟 FIX: Return explicit error state
     try:
         setup_headers(sheet)
@@ -53,7 +55,7 @@ def get_last_post_time(sheet_url, post_type="QuranReel"):
         print(f"   > ❌ Sheets Read Error: {e}")
         return "API_ERROR"  # 🌟 FIX: Catch 500 errors and flag them
 
-def log_post(personal_sheet_url, master_sheet_url, reference, post_type="QuranReel"):
+def log_post(personal_sheet_url, master_sheet_url, reference, post_type="QuranReel", creds_path=None):
     # 1. Prepare the exact data we want to log
     now = datetime.now() # Log local time
     date_str = now.strftime("%Y-%m-%d")
@@ -62,7 +64,7 @@ def log_post(personal_sheet_url, master_sheet_url, reference, post_type="QuranRe
     row_data = [date_str, time_str, post_type, reference, "✅ Uploaded", raw_iso]
 
     # 2. Write to the Profile's Personal Sheet
-    personal_sheet = get_sheet(personal_sheet_url)
+    personal_sheet = get_sheet(personal_sheet_url, creds_path)
     if personal_sheet:
         try:
             setup_headers(personal_sheet)
@@ -74,7 +76,7 @@ def log_post(personal_sheet_url, master_sheet_url, reference, post_type="QuranRe
         print("   > ⚠️ Warning: Personal Sheet not configured or inaccessible.")
 
     # 3. Write to the Global Master Sheet
-    master_sheet = get_sheet(master_sheet_url)
+    master_sheet = get_sheet(master_sheet_url, creds_path)
     if master_sheet:
         try:
             setup_headers(master_sheet)
@@ -85,15 +87,17 @@ def log_post(personal_sheet_url, master_sheet_url, reference, post_type="QuranRe
     else:
          print("   > ⚠️ Warning: Master Sheet not configured or inaccessible.")
 
-def get_gspread_client():
+def get_gspread_client(creds_path=None):
+    if not creds_path:
+        creds_path = 'sheets_secret.json'
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_file('sheets_secret.json', scopes=scopes)
+    creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
     return gspread.authorize(creds)
 
-def push_settings_to_cloud(sheet_url, settings_dict):
+def push_settings_to_cloud(sheet_url, settings_dict, creds_path=None):
     print("   > ☁️ Pushing Agency Profile to Google Sheets...")
     try:
-        client = get_gspread_client()
+        client = get_gspread_client(creds_path)
         doc = client.open_by_url(sheet_url)
         try: sheet = doc.worksheet("Agency_Profile")
         except gspread.exceptions.WorksheetNotFound: sheet = doc.add_worksheet(title="Agency_Profile", rows="100", cols="5")
@@ -115,10 +119,10 @@ def push_settings_to_cloud(sheet_url, settings_dict):
         print(f"   > ❌ Cloud Sync Error: {e}")
         return False
 
-def pull_settings_from_cloud(sheet_url):
+def pull_settings_from_cloud(sheet_url, creds_path=None):
     print("   > ☁️ Pulling Agency Profile from Google Sheets...")
     try:
-        client = get_gspread_client()
+        client = get_gspread_client(creds_path)
         doc = client.open_by_url(sheet_url)
         sheet = doc.worksheet("Agency_Profile")
         raw_json = sheet.acell('E2').value
@@ -132,10 +136,10 @@ def pull_settings_from_cloud(sheet_url):
         print(f"   > ❌ Cloud Restore Error: {e}")
         return None
 
-def sync_lf_timestamp(sheet_url, timestamp_str):
+def sync_lf_timestamp(sheet_url, timestamp_str, creds_path=None):
     print("   > ☁️ Syncing Long-Form timestamp to Google Sheets...")
     try:
-        client = get_gspread_client()
+        client = get_gspread_client(creds_path)
         doc = client.open_by_url(sheet_url)
         try:
             sheet = doc.worksheet("Long-Form Logs")

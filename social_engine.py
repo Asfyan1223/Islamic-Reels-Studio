@@ -5,6 +5,9 @@ import time
 import sys
 from datetime import datetime, timezone
 from PIL import Image
+import socket
+# Force the server to drop dead connections after 5 minutes (300 seconds)
+socket.setdefaulttimeout(300)
 
 def get_meta_server_time():
     try:
@@ -203,11 +206,17 @@ def get_authenticated_youtube_service(token_path):
                 creds = None
         
         if not creds:
-            if not os.path.exists('client_secret.json'): 
-                print("   > ❌ YT Error: Missing client_secret.json in main directory!")
-                return None
+            profile_dir = os.path.dirname(token_path) if token_path else ""
+            client_secret_path = os.path.join(profile_dir, 'client_secret.json') if profile_dir else 'client_secret.json'
+            
+            if not os.path.exists(client_secret_path):
+                if os.path.exists('client_secret.json'):
+                    client_secret_path = 'client_secret.json'
+                else:
+                    print(f"   > ❌ YT Error: Missing client_secret.json in profile vault ({client_secret_path}) or main directory!")
+                    return None
             print("   > 🌍 Opening browser for Google Authentication...")
-            flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
             creds = flow.run_local_server(port=0, prompt='select_account consent')
             
         # Ensure parent directory exists
@@ -262,21 +271,25 @@ def upload_to_youtube(video_path, title, description, token_path):
         import socket
         import time
         
-        chunksize = 1024 * 1024  # 1MB chunk size
-        media = MediaFileUpload(video_path, chunksize=chunksize, resumable=True)
+        media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
         print("   > 🚀 Pushing video file to YouTube Servers...")
         request = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
         
         response = None
+        retries = 0
+        max_retries = 3
         while response is None:
             try:
                 status, response = request.next_chunk()
                 if status:
                     print(f"      [+] YouTube Upload Progress: {int(status.progress() * 100)}%")
             except (ConnectionResetError, socket.error, Exception) as e:
-                print(f"      [!] Network connection reset detected ({e}). Re-establishing connection in 30 seconds...")
+                retries += 1
+                if retries > max_retries:
+                    print(f"      [!] YouTube Upload timed out or failed {max_retries} times. Aborting retry loop to prevent hang.")
+                    raise RuntimeError(f"YouTube upload failed after {max_retries} retries: {e}")
+                print(f"      [!] Network connection reset detected ({e}). Re-establishing connection in 30 seconds (Retry {retries}/{max_retries})...")
                 time.sleep(30)
-                # Continue the chunk resume loop without resetting the entire file upload progress
                 continue
                 
         if response and 'id' in response:

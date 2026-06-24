@@ -474,7 +474,8 @@ class IslamicReelsStudio(ctk.CTk):
         try:
             status = social_engine.check_server_status(self.master_settings[self.active_profile])
             sheet_url = self.get_active_setting("personal_sheet_url", "") 
-            self.last_time = cloud_logger.get_last_post_time(sheet_url)
+            profile_creds = os.path.join(creds_vault_dir, self.active_profile, "sheets_secret.json")
+            self.last_time = cloud_logger.get_last_post_time(sheet_url, creds_path=profile_creds)
         except Exception:
             status = {"meta_time": "Error", "facebook": "Network Error", "youtube": "Network Error"}
             self.last_time = "API_ERROR"
@@ -519,12 +520,13 @@ class IslamicReelsStudio(ctk.CTk):
         self.after(0, update_labels)
 
     def trigger_manual_upload(self):
-        if os.path.exists(LAST_VIDEO_FILE):
+        last_video_file = f"last_rendered_video_{self.active_profile}.json"
+        if os.path.exists(last_video_file):
             try:
-                with open(LAST_VIDEO_FILE, "r") as f:
+                with open(last_video_file, "r") as f:
                     generated_paths = json.load(f)
             except:
-                with open(LAST_VIDEO_FILE, "r") as f:
+                with open(last_video_file, "r") as f:
                     path = f.read().strip()
                 generated_paths = {"ig": path, "yt": path}
 
@@ -740,7 +742,7 @@ class IslamicReelsStudio(ctk.CTk):
                 return
             with self.creds_lock:
                 self.stage_credentials(self.active_profile)
-                success = cloud_logger.push_settings_to_cloud(url, self.master_settings)
+                success = cloud_logger.push_settings_to_cloud(url, self.master_settings, creds_path=prof_sheet_path)
             if success: messagebox.showinfo("Cloud Sync", "✅ Agency Settings safely backed up to Google Sheets!")
             else: messagebox.showerror("Sync Error", "Failed to upload to Google Sheets. Check the terminal log.")
 
@@ -752,7 +754,7 @@ class IslamicReelsStudio(ctk.CTk):
             if messagebox.askyesno("Confirm Restore", "⚠️ This will overwrite all your current local profiles. Are you sure?"):
                 with self.creds_lock:
                     self.stage_credentials(self.active_profile)
-                    cloud_settings = cloud_logger.pull_settings_from_cloud(url)
+                    cloud_settings = cloud_logger.pull_settings_from_cloud(url, creds_path=prof_sheet_path)
                     
                 if cloud_settings:
                     if "admin_password" in cloud_settings and not isinstance(cloud_settings["admin_password"], dict):
@@ -1161,7 +1163,8 @@ class IslamicReelsStudio(ctk.CTk):
             with self.creds_lock:
                 self.stage_credentials(target_prof)
                 
-            prof_settings = self.master_settings[target_prof]
+            prof_settings = self.master_settings[target_prof].copy()
+            prof_settings["current_profile_name"] = target_prof
             
             target_dur = prof_settings.get("min_duration", 20)
             c_surah = prof_settings.get("custom_surah") if prof_settings.get("custom_verse_enabled") else None
@@ -1309,7 +1312,8 @@ class IslamicReelsStudio(ctk.CTk):
                 print("   > ❌ Pipeline aborted: Render completely failed.")
                 return False, None
             
-            with open(LAST_VIDEO_FILE, "w") as f:
+            last_video_file = f"last_rendered_video_{target_prof}.json"
+            with open(last_video_file, "w") as f:
                 json.dump(generated_paths, f)
                 
             audio_generator.cleanup_audio_files(sequence_data)
@@ -1374,7 +1378,8 @@ class IslamicReelsStudio(ctk.CTk):
                     
                 if self.get_active_setting("enable_sheet_logs", True):
                     personal_url = self.get_active_setting("personal_sheet_url", "")
-                    cloud_logger.log_post(personal_url, master_url, cloud_log_text)
+                    profile_creds = os.path.join(creds_vault_dir, self.active_profile, "sheets_secret.json")
+                    cloud_logger.log_post(personal_url, master_url, cloud_log_text, creds_path=profile_creds)
                 else:
                     print("   > ☁️ Local logs only. Google Sheets logging is disabled for this profile.")
                     
@@ -1400,22 +1405,30 @@ class IslamicReelsStudio(ctk.CTk):
                         interval_hrs = settings.get("upload_interval", 2)
                         local_fallback_file = f"last_post_{prof_name}.txt"
                         
+                        cloud_time = None
                         try:
-                            last_post_time = cloud_logger.get_last_post_time(personal_url)
+                            profile_creds = os.path.join(creds_vault_dir, prof_name, "sheets_secret.json")
+                            cloud_time = cloud_logger.get_last_post_time(personal_url, creds_path=profile_creds)
                         except: 
-                            last_post_time = "API_ERROR"
+                            pass
                         
-                        if last_post_time == "API_ERROR":
-                            print(f"   > ⚠️ Google API 500 Error. Checking local memory for [{prof_name}]...")
-                            if os.path.exists(local_fallback_file):
-                                try:
-                                    with open(local_fallback_file, "r") as f:
-                                        last_post_time = datetime.fromisoformat(f.read().strip())
-                                except:
-                                    last_post_time = None
-                            else:
-                                print(f"   > 🛑 API Down & No Local Memory. Skipping cycle to prevent spam.")
-                                continue
+                        local_time = None
+                        if os.path.exists(local_fallback_file):
+                            try:
+                                with open(local_fallback_file, "r") as f:
+                                    local_time = datetime.fromisoformat(f.read().strip())
+                            except:
+                                pass
+
+                        last_post_time = None
+                        if cloud_time and cloud_time != "API_ERROR" and local_time:
+                            ct = cloud_time.replace(tzinfo=None) if cloud_time.tzinfo else cloud_time
+                            lt = local_time.replace(tzinfo=None) if local_time.tzinfo else local_time
+                            last_post_time = cloud_time if ct > lt else local_time
+                        elif cloud_time and cloud_time != "API_ERROR":
+                            last_post_time = cloud_time
+                        elif local_time:
+                            last_post_time = local_time
 
                         now = datetime.now()
                         should_post = False
@@ -1453,7 +1466,9 @@ class IslamicReelsStudio(ctk.CTk):
                                     self.stage_credentials(prof_name)
                                     
                                 if settings.get("enable_sheet_logs", True):
-                                    cloud_logger.log_post(personal_url, master_url, cloud_log_text)
+                                    personal_url = settings.get("personal_sheet_url", "")
+                                    profile_creds = os.path.join(creds_vault_dir, prof_name, "sheets_secret.json")
+                                    cloud_logger.log_post(personal_url, master_url, cloud_log_text, creds_path=profile_creds)
                                 else:
                                     print("   > ☁️ Local logs only. Google Sheets logging is disabled for this profile.")
                                     
