@@ -8,6 +8,10 @@ import customtkinter as ctk
 from tkinter import colorchooser, filedialog, messagebox, simpledialog
 import threading
 import sys
+import socket
+
+# Prevent silent network hangs on AWS VPS/Server connections
+socket.setdefaulttimeout(60)
 import os
 import glob
 import json
