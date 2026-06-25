@@ -12,6 +12,16 @@ import socket
 
 # Prevent silent network hangs on AWS VPS/Server connections
 socket.setdefaulttimeout(60)
+
+import requests
+# Enforce a global 30-second timeout on all requests/gspread session calls to prevent freezes
+_original_session_request = requests.Session.request
+def _timed_session_request(self, method, url, *args, **kwargs):
+    if 'timeout' not in kwargs or kwargs['timeout'] is None:
+        kwargs['timeout'] = 30
+    return _original_session_request(self, method, url, *args, **kwargs)
+requests.Session.request = _timed_session_request
+
 import os
 import glob
 import json
