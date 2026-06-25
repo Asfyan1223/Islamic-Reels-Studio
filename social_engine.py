@@ -367,9 +367,7 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         else:
             print("   > ⏭️ Skipping Facebook (Missing Token or Page ID)")
     else:
-        if global_enable_fb:
-            print("   > ⏭️ Skipping Facebook (Not targeted for this variant)")
-        else:
+        if not global_enable_fb:
             print("   > ⏭️ Skipping Facebook (Turned off in settings)")
 
     # 2. Instagram
@@ -381,9 +379,7 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         else:
             print("   > ⏭️ Skipping Instagram (Missing Token or IG ID)")
     else:
-        if global_enable_ig:
-            print("   > ⏭️ Skipping Instagram (Not targeted for this variant)")
-        else:
+        if not global_enable_ig:
             print("   > ⏭️ Skipping Instagram (Turned off in settings)")
 
     # 3. YouTube
@@ -397,9 +393,7 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         
         upload_to_youtube(video_path, yt_title, caption, profile_yt_token)
     else:
-        if global_enable_yt:
-            print("   > ⏭️ Skipping YouTube (Not targeted for this variant)")
-        else:
+        if not global_enable_yt:
             print("   > ⏭️ Skipping YouTube (Turned off in settings)")
 
     print("========================================")
