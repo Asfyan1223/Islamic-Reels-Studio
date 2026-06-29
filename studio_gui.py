@@ -114,6 +114,10 @@ class RedirectText:
 class IslamicReelsStudio(ctk.CTk):
     def __init__(self):
         super().__init__()
+        print("\n======================================================================")
+        print("⚠️ low physical RAM profile detected: EC2 performance optimizations enabled.")
+        print("======================================================================\n")
+        sys.stdout.flush()
         
         self.is_startup_launch = "--startup" in sys.argv
         
@@ -567,6 +571,7 @@ class IslamicReelsStudio(ctk.CTk):
                                 thumb_path = None
                                 
                             social_engine.run_all_uploads(generated_paths['ig'], self.last_quran_data, temp_set_ig, thumbnail_path=thumb_path)
+                            gc.collect()
                             
                         if 'yt' in generated_paths and os.path.exists(generated_paths['yt']):
                             print(f"   > 📤 Pushing YouTube variant...")
@@ -574,8 +579,10 @@ class IslamicReelsStudio(ctk.CTk):
                             temp_set_yt['enable_fb'] = False
                             temp_set_yt['enable_ig'] = False
                             social_engine.run_all_uploads(generated_paths['yt'], self.last_quran_data, temp_set_yt)
+                            gc.collect()
                             
                         print("   > ✅ Manual Upload Routine Complete.")
+                        gc.collect()
 
                     threading.Thread(target=upload_thread, daemon=True).start()
             else:
@@ -1410,6 +1417,7 @@ class IslamicReelsStudio(ctk.CTk):
             
             self.is_uploading = True
             success, cloud_log_text = self.execute_render_and_upload(self.active_profile, yt_active, insta_active, fb_active)
+            gc.collect()
             if success and getattr(self, 'is_running', False):
                 with self.creds_lock:
                     self.stage_credentials(self.active_profile)
@@ -1423,6 +1431,7 @@ class IslamicReelsStudio(ctk.CTk):
                     
             self.is_uploading = False
             self.is_running = False
+            gc.collect()
             self.after(0, lambda: self.generate_btn.configure(text="🎬 START AUTOMATION ENGINE", fg_color=["#2CC985", "#2FA572"], hover_color=["#209661", "#22855A"]))
             return
 
@@ -1515,17 +1524,20 @@ class IslamicReelsStudio(ctk.CTk):
                                 print(f"\n   > ❌ {prof_name} Pipeline halted. Moving to next in queue...")
                             
                             self.is_uploading = False
+                            gc.collect()
                             
                     except Exception as inner_e:
                         import traceback
                         print(f"\n   > 🛡️ FIREWALL CAUGHT ERROR ON [{prof_name}]. Page skipped for this cycle.")
                         print(traceback.format_exc())
                         self.is_uploading = False
+                        gc.collect()
                         continue 
                         
                 for _ in range(60):
                     if not self.is_running: break
                     time.sleep(1)
+                gc.collect()
                     
             except Exception as e:
                 import traceback

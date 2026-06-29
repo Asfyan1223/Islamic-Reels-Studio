@@ -50,7 +50,7 @@ def get_whisper_model():
     if _whisper_model is None and WhisperModel is not None:
         print("   > 🧠 Initializing Whisper AI Engine (Int8 CPU Optimized)...")
         try:
-            _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+            _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=1)
         except Exception as e:
             print(f"   > ⚠️ Whisper Init Error: {e}")
             return None
@@ -116,6 +116,7 @@ def generate_word_timestamps(audio_path, text, duration):
         # 🌟 ACCURACY FIX: Force Whisper to lock onto Arabic ('ar')
         segments, _ = model.transcribe(audio_path, word_timestamps=True, language="ar", condition_on_previous_text=False)
         ai_words = [word for segment in segments for word in segment.words]
+        gc.collect()
         
         aligned = []
         ai_idx = 0

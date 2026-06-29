@@ -479,12 +479,8 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
         import multiprocessing
         max_cores = multiprocessing.cpu_count()
 
-        if "1 Core" in cpu_core_limit:
-            render_threads = 1 
-            print("   > ⚙️ CPU Profile: 1 CORE | Quality: 1080p HD")
-        else:
-            render_threads = max_cores  
-            print(f"   > ⚙️ CPU Profile: {max_cores} CORES | Quality: 1080p HD")
+        render_threads = 1
+        print("   > ⚙️ CPU Profile: 1 CORE (Forced for 2GB RAM Optimization) | Quality: 1080p HD")
 
         custom_logger = CancelableLogger(abort_check)
         temp_audio_name = os.path.join(TEMP_DIR, f"temp_audio_{random.randint(100000, 999999)}.mp4")
@@ -492,7 +488,8 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
         final_video.write_videofile(
             output_filename, fps=30, codec="libx264", audio_codec="aac",
             bitrate=fixed_bitrate, preset=render_preset, threads=render_threads,
-            logger=custom_logger, temp_audiofile=temp_audio_name, remove_temp=False
+            logger=custom_logger, temp_audiofile=temp_audio_name, remove_temp=False,
+            ffmpeg_params=["-max_muxing_queue_size", "256", "-preset", "ultrafast"]
         )
         print(f"   > ✅ Video successfully rendered: {output_filename}")
         success = True
@@ -528,5 +525,8 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
         for api_file in api_temp_files:
             try: os.remove(api_file)
             except: pass
+            
+        import gc
+        gc.collect()
                 
     return success, bg_name
