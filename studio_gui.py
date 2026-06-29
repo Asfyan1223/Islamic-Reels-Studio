@@ -1,3 +1,13 @@
+import sys
+
+# --- GLOBAL ENCODING FIX ---
+# Force Windows terminal to support UTF-8 emojis without crashing
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+# ---------------------------
+
 import multiprocessing
 import audio_generator
 import video_composer
@@ -7,7 +17,6 @@ import cloud_logger
 import customtkinter as ctk
 from tkinter import colorchooser, filedialog, messagebox, simpledialog
 import threading
-import sys
 import socket
 
 # Prevent silent network hangs on AWS VPS/Server connections
