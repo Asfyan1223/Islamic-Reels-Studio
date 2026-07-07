@@ -234,9 +234,9 @@ def get_authenticated_youtube_service(token_path):
                 else:
                     print(f"   > ❌ YT Error: Missing client_secret.json in profile vault ({client_secret_path}) or main directory ({main_secret_path})!")
                     return None
-            print("   > 🌍 Opening browser for Google Authentication...")
+            print("[⚠️] ACTION REQUIRED: If the browser does not open automatically, copy the URL below and paste it into a browser INSIDE THIS RDP SESSION. The server will wait 24 hours (86400 seconds) for you to complete this.")
             flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
-            creds = flow.run_local_server(port=0, prompt='select_account consent')
+            creds = flow.run_local_server(port=0, prompt='select_account consent', timeout_seconds=86400)
             
         # Ensure parent directory exists
         os.makedirs(os.path.dirname(os.path.abspath(token_path)), exist_ok=True)
