@@ -76,15 +76,52 @@ def build_caption(quran_data, cta_text="", reciter_name=""):
 
 def get_temp_url(file_path):
     print("   > ☁️ Uploading to Temp Server for direct Meta Transfer...")
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    # 1. Try Catbox.moe (Primary - Direct High-Speed CDN URL, Best for Meta Graph API)
     try:
         with open(file_path, 'rb') as f:
-            res = requests.post("https://tmpfiles.org/api/v1/upload", files={'file': f}).json()
-            url = res['data']['url']
-            direct_url = url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-            return direct_url
+            res = requests.post(
+                "https://catbox.moe/user/api.php",
+                data={'reqtype': 'fileupload'},
+                files={'fileToUpload': f},
+                headers=headers,
+                timeout=30
+            )
+            if res.status_code == 200 and res.text.strip().startswith("http"):
+                url = res.text.strip()
+                print(f"   > ✅ Uploaded to Catbox CDN: {url}")
+                return url
     except Exception as e:
-        print(f"   > ❌ Temp Server Error: {e}")
-        return None
+        print(f"   > ⚠️ Primary Host Notice (Catbox): {e}")
+
+    # 2. Try Tmpfiles.org with KeyError Failsafe
+    try:
+        with open(file_path, 'rb') as f:
+            res = requests.post("https://tmpfiles.org/api/v1/upload", files={'file': f}, headers=headers, timeout=30).json()
+            if isinstance(res, dict) and res.get('status') == 'success' and 'data' in res and 'url' in res['data']:
+                url = res['data']['url']
+                direct_url = url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                print(f"   > ✅ Uploaded to Tmpfiles: {direct_url}")
+                return direct_url
+            else:
+                print(f"   > ⚠️ Tmpfiles returned non-success structure: {res}")
+    except Exception as e:
+        print(f"   > ⚠️ Tmpfiles Host Notice: {e}")
+
+    # 3. Try 0x0.st Failsafe
+    try:
+        with open(file_path, 'rb') as f:
+            res = requests.post("https://0x0.st", files={'file': f}, headers=headers, timeout=30)
+            if res.status_code == 200 and res.text.strip().startswith("http"):
+                url = res.text.strip()
+                print(f"   > ✅ Uploaded to 0x0.st: {url}")
+                return url
+    except Exception as e:
+        print(f"   > ⚠️ 0x0.st Host Notice: {e}")
+
+    print("   > ❌ Temp Server Error: All temporary hosting services failed.")
+    return None
 
 def upload_to_facebook(video_path, caption, page_id, token):
     print(f"   > 🌐 Uploading to Facebook Page: {page_id}...")
@@ -161,10 +198,10 @@ def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=No
             container_id = res['id']
             print(f"   > 📦 IG Container Created. Waiting for Meta to verify file...")
             is_ready = False
-            status_url = f"https://graph.facebook.com/v19.0/{container_id}?fields=status_code&access_token={token}"
+            status_url = f"https://graph.facebook.com/v19.0/{container_id}?fields=status_code,status&access_token={token}"
             
-            for attempt in range(12):
-                print(f"   > ⏳ Polling IG Status (Attempt {attempt + 1}/12)...")
+            for attempt in range(15):
+                print(f"   > ⏳ Polling IG Status (Attempt {attempt + 1}/15)...")
                 time.sleep(10) 
                 status_res = requests.get(status_url).json()
                 status_code = status_res.get('status_code', '')
@@ -173,17 +210,20 @@ def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=No
                     is_ready = True
                     break
                 elif status_code == 'ERROR':
-                    print("   > ❌ IG Processing Failed. Meta rejected the file.")
+                    err_details = status_res.get('status', status_res)
+                    print(f"   > ❌ IG Processing Failed. Meta Status: {err_details}")
                     return
-            if not is_ready: return
+            if not is_ready:
+                print("   > ⏱️ IG Processing Timed Out after 15 attempts.")
+                return
             
             publish_url = f"https://graph.facebook.com/v19.0/{ig_id}/media_publish"
             publish_payload = {'creation_id': container_id, 'access_token': token}
-            pub_res = requests.post(publish_url, data=publish_payload).json()
+            pub_res = requests.post(publish_url, data=payload).json() if False else requests.post(publish_url, data=publish_payload).json()
             if 'id' in pub_res: print(f"   > ✅ IG Reel Published Successfully!")
             else: print(f"   > ❌ IG Publish Error: {pub_res}")
         else:
-            print(f"   > ❌ IG Container Error: {res}")
+            print(f"   > ❌ IG Container Creation Error: {res}")
     except Exception as e:
         print(f"   > ❌ IG Exception: {e}")
 
@@ -251,7 +291,7 @@ def get_authenticated_youtube_service(token_path):
         print(f"   > ❌ YT build service exception: {e}")
         return None
 
-def upload_to_youtube(video_path, title, description, token_path):
+def upload_to_youtube(video_path, title, description, token_path, thumbnail_path=None):
     print(f"   > 🌐 Initiating YouTube Upload Module...")
     print(f"   > 🔐 Target Token Vault: {token_path}")
     
@@ -312,7 +352,16 @@ def upload_to_youtube(video_path, title, description, token_path):
                 continue
                 
         if response and 'id' in response:
-            print(f"   > ✅ YT Upload Success! Video ID: {response['id']}")
+            video_id = response['id']
+            print(f"   > ✅ YT Upload Success! Video ID: {video_id}")
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                try:
+                    print(f"   > 🖼️ Uploading custom thumbnail to YouTube video ({video_id})...")
+                    thumb_media = MediaFileUpload(thumbnail_path)
+                    youtube.thumbnails().set(videoId=video_id, media_body=thumb_media).execute()
+                    print(f"   > ✅ YouTube Custom Thumbnail set successfully!")
+                except Exception as thumb_err:
+                    print(f"   > ⚠️ YouTube Thumbnail Notice: {thumb_err}")
         else:
             print("   > ❌ YT Upload Failed: No response ID received.")
         
@@ -352,7 +401,9 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
 
     # Staging Engine
     thumb_url = None
-    if thumbnail_path:
+    local_thumb_file = None
+    if thumbnail_path and os.path.exists(thumbnail_path):
+        local_thumb_file = thumbnail_path
         print(f"   > 🖼️ Staging custom thumbnail path: {thumbnail_path}")
         thumb_url = get_temp_url(thumbnail_path)
     elif settings.get("auto_thumbnail", False):
@@ -361,9 +412,9 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         if os.path.exists(thumb_folder):
             photos = glob.glob(os.path.join(thumb_folder, "*.jpg")) + glob.glob(os.path.join(thumb_folder, "*.png"))
             if photos:
-                selected_photo = random.choice(photos)
-                print(f"   > 🖼️ Uploading Thumbnail: {os.path.basename(selected_photo)}")
-                thumb_url = get_temp_url(selected_photo)
+                local_thumb_file = random.choice(photos)
+                print(f"   > 🖼️ Uploading Thumbnail: {os.path.basename(local_thumb_file)}")
+                thumb_url = get_temp_url(local_thumb_file)
                 if thumb_url: print("   > ✅ Thumbnail staged successfully.")
             else:
                 print(f"   > ⚠️ Warning: '{thumb_folder}' is empty. Skipping custom thumbnail.")
@@ -400,7 +451,7 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         current_profile = settings.get("current_profile_name", "Main Page")
         profile_yt_token = os.path.join(install_dir, "credentials", current_profile, "token.json")
         
-        upload_to_youtube(video_path, yt_title, caption, profile_yt_token)
+        upload_to_youtube(video_path, yt_title, caption, profile_yt_token, thumbnail_path=local_thumb_file)
     else:
         if not global_enable_yt:
             print("   > ⏭️ Skipping YouTube (Turned off in settings)")
