@@ -93,6 +93,12 @@ def run_environment_precheck(verbose=True):
     if os.path.exists(creds_dir):
         profiles = [d for d in os.listdir(creds_dir) if os.path.isdir(os.path.join(creds_dir, d))]
         passed_items.append(f"Credentials Vault: Found {len(profiles)} profile folder(s) ({', '.join(profiles) if profiles else 'None'})")
+        for prof in profiles:
+            token_file = os.path.join(creds_dir, prof, "token.json")
+            if os.path.exists(token_file):
+                passed_items.append(f"YouTube Token [{prof}]: token.json file present")
+            else:
+                warnings.append(f"YouTube Token [{prof}]: token.json missing (browser auth will trigger before compiling)")
     else:
         warnings.append(f"Credentials directory '{creds_dir}' does not exist yet.")
 

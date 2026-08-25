@@ -1420,9 +1420,42 @@ class IslamicReelsStudio(ctk.CTk):
             return False, None
         finally:
             self.cleanup_root_clutter()
+
+    def precheck_all_youtube_tokens(self):
+        """
+        Pre-flight YouTube token authentication check for all profiles.
+        If any profile token is missing or expired, it opens the browser DIRECTLY
+        to authenticate channel 1, channel 2, etc. BEFORE video compilation starts!
+        """
+        print("\n======================================================================")
+        print("🔐 PRE-FLIGHT YOUTUBE CREDENTIALS CHECK...")
+        print("======================================================================")
+        
+        for prof_name, settings in self.master_settings.items():
+            if not settings.get("enable_yt", True):
+                print(f"   > ⏭️ Skipping YouTube auth check for [{prof_name}]: YouTube disabled in settings.")
+                continue
+                
+            token_path = os.path.join(creds_vault_dir, prof_name, "token.json")
+            print(f"   > 🔑 Verifying YouTube OAuth token for profile: [{prof_name.upper()}]...")
+            try:
+                youtube = social_engine.get_authenticated_youtube_service(token_path)
+                if youtube:
+                    print(f"   > ✅ Profile [{prof_name}]: YouTube Channel Verified & Logged In!")
+                else:
+                    print(f"   > ⚠️ Profile [{prof_name}]: Could not authenticate YouTube token.")
+            except Exception as auth_err:
+                print(f"   > ⚠️ Profile [{prof_name}]: Pre-Auth Notice: {auth_err}")
+                
+        print("======================================================================\n")
+
     def run_pipeline(self, yt_active=True, insta_active=True, fb_active=True):
         print("========================================")
         
+        # 🔐 PRE-FLIGHT YOUTUBE TOKEN CHECK BEFORE COMPILING REELS
+        if yt_active:
+            self.precheck_all_youtube_tokens()
+
         any_auto = any(p.get("auto_upload", False) for p in self.master_settings.values())
         master_url = "https://docs.google.com/spreadsheets/d/1Q5E6w4PkKR6vS__Fd8Go6rHBIG0nsKdeuly6lHTPVGE/edit?gid=0#gid=0" 
         
