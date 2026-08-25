@@ -14,6 +14,7 @@ import video_composer
 import news_gatherer
 import social_engine
 import cloud_logger
+import environment_precheck
 import customtkinter as ctk
 from tkinter import colorchooser, filedialog, messagebox, simpledialog
 import threading
@@ -128,6 +129,11 @@ class IslamicReelsStudio(ctk.CTk):
         print("======================================================================\n")
         sys.stdout.flush()
         
+        try:
+            environment_precheck.run_environment_precheck(verbose=True)
+        except Exception as precheck_e:
+            print(f"⚠️ Notice: Rapid precheck encountered non-fatal exception: {precheck_e}")
+
         self.is_startup_launch = "--startup" in sys.argv
         
         self.title("Islamic Reels Studio - Agency Edition by AMB Enterprise")
