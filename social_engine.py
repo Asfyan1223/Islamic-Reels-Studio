@@ -76,15 +76,16 @@ def build_caption(quran_data, cta_text="", reciter_name=""):
 
 def get_temp_url(file_path):
     print("   > ☁️ Uploading to Temp Server for direct Meta Transfer...")
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    filename = os.path.basename(file_path)
 
-    # 1. Try Catbox.moe (Primary - Direct High-Speed CDN URL, Best for Meta Graph API)
+    # 1. Try Catbox.moe (Primary - Direct High-Speed CDN URL)
     try:
         with open(file_path, 'rb') as f:
             res = requests.post(
                 "https://catbox.moe/user/api.php",
                 data={'reqtype': 'fileupload'},
-                files={'fileToUpload': f},
+                files={'fileToUpload': (filename, f)},
                 headers=headers,
                 timeout=30
             )
@@ -92,33 +93,46 @@ def get_temp_url(file_path):
                 url = res.text.strip()
                 print(f"   > ✅ Uploaded to Catbox CDN: {url}")
                 return url
+            else:
+                print(f"   > ⚠️ Catbox returned HTTP {res.status_code}: {res.text[:100]}")
     except Exception as e:
         print(f"   > ⚠️ Primary Host Notice (Catbox): {e}")
 
-    # 2. Try Tmpfiles.org with KeyError Failsafe
+    # 2. Try Litterbox (Catbox 1-Hour Temporary Host Failsafe)
     try:
         with open(file_path, 'rb') as f:
-            res = requests.post("https://tmpfiles.org/api/v1/upload", files={'file': f}, headers=headers, timeout=30).json()
+            res = requests.post(
+                "https://litterbox.catbox.moe/resources/internals/api.php",
+                data={'reqtype': 'fileupload', 'time': '1h'},
+                files={'fileToUpload': (filename, f)},
+                headers=headers,
+                timeout=30
+            )
+            if res.status_code == 200 and res.text.strip().startswith("http"):
+                url = res.text.strip()
+                print(f"   > ✅ Uploaded to Litterbox CDN: {url}")
+                return url
+    except Exception as e:
+        print(f"   > ⚠️ Litterbox Host Notice: {e}")
+
+    # 3. Try Tmpfiles.org with Explicit Filename Tuple
+    try:
+        with open(file_path, 'rb') as f:
+            res = requests.post(
+                "https://tmpfiles.org/api/v1/upload",
+                files={'file': (filename, f)},
+                headers=headers,
+                timeout=30
+            ).json()
             if isinstance(res, dict) and res.get('status') == 'success' and 'data' in res and 'url' in res['data']:
                 url = res['data']['url']
                 direct_url = url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
                 print(f"   > ✅ Uploaded to Tmpfiles: {direct_url}")
                 return direct_url
             else:
-                print(f"   > ⚠️ Tmpfiles returned non-success structure: {res}")
+                print(f"   > ⚠️ Tmpfiles Notice: {res}")
     except Exception as e:
         print(f"   > ⚠️ Tmpfiles Host Notice: {e}")
-
-    # 3. Try 0x0.st Failsafe
-    try:
-        with open(file_path, 'rb') as f:
-            res = requests.post("https://0x0.st", files={'file': f}, headers=headers, timeout=30)
-            if res.status_code == 200 and res.text.strip().startswith("http"):
-                url = res.text.strip()
-                print(f"   > ✅ Uploaded to 0x0.st: {url}")
-                return url
-    except Exception as e:
-        print(f"   > ⚠️ 0x0.st Host Notice: {e}")
 
     print("   > ❌ Temp Server Error: All temporary hosting services failed.")
     return None
