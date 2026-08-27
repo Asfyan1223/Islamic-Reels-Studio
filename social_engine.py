@@ -133,6 +133,48 @@ def start_ec2_media_server():
         print(f"   > ⚠️ Self-hosted server notice on port {SERVER_PORT}: {e}")
         return SERVER_PORT
 
+_ec2_tunnel_url = None
+
+def get_cloudflare_tunnel_url(port=SERVER_PORT):
+    global _ec2_tunnel_url
+    if _ec2_tunnel_url:
+        return _ec2_tunnel_url
+
+    # Check if cloudflared is present or attempt download
+    install_dir = os.path.dirname(os.path.abspath(__file__))
+    exe_path = os.path.join(install_dir, "cloudflared.exe")
+    if not os.path.exists(exe_path):
+        try:
+            print("   > ⏬ Auto-fetching lightweight Cloudflare HTTPS Tunnel binary...")
+            url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+            res = requests.get(url, timeout=15)
+            if res.status_code == 200:
+                with open(exe_path, "wb") as f:
+                    f.write(res.content)
+                print("   > ✅ Cloudflare HTTPS Tunnel binary acquired successfully!")
+        except Exception as dl_err:
+            pass
+
+    if os.path.exists(exe_path):
+        try:
+            import subprocess
+            cmd = f'"{exe_path}" tunnel --url http://127.0.0.1:{port}'
+            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="ignore")
+            start_time = time.time()
+            while time.time() - start_time < 8:
+                line = proc.stdout.readline()
+                if not line: break
+                if "trycloudflare.com" in line:
+                    for part in line.split():
+                        if "trycloudflare.com" in part and part.startswith("https://"):
+                            _ec2_tunnel_url = part.strip()
+                            print(f"   > 🔒 Cloudflare HTTPS Tunnel ACTIVE: {_ec2_tunnel_url}")
+                            return _ec2_tunnel_url
+        except Exception as tunnel_err:
+            print(f"   > ⚠️ Tunnel notice: {tunnel_err}")
+
+    return None
+
 def get_self_hosted_media_url(file_path):
     if not file_path or not os.path.exists(file_path):
         return None
@@ -144,23 +186,53 @@ def get_self_hosted_media_url(file_path):
     try:
         abs_file = os.path.abspath(file_path)
         abs_output = os.path.abspath(output_dir)
+
+        # Sanitize spaces in filenames to prevent Meta Error 2207077
+        dir_name, base_name = os.path.split(abs_file)
+        if " " in base_name:
+            clean_name = base_name.replace(" ", "_")
+            new_file_path = os.path.join(dir_name, clean_name)
+            try:
+                if os.path.exists(new_file_path):
+                    os.remove(new_file_path)
+                os.rename(abs_file, new_file_path)
+                abs_file = new_file_path
+                file_path = new_file_path
+            except Exception as ren_err:
+                shutil.copy2(abs_file, new_file_path)
+                abs_file = new_file_path
+
         if abs_file.startswith(abs_output):
             rel_path = os.path.relpath(abs_file, abs_output).replace("\\", "/")
         else:
             web_dir = os.path.join(output_dir, "web_media")
             os.makedirs(web_dir, exist_ok=True)
-            dest = os.path.join(web_dir, os.path.basename(file_path))
-            shutil.copy2(file_path, dest)
-            rel_path = f"web_media/{os.path.basename(file_path)}"
+            clean_basename = os.path.basename(abs_file).replace(" ", "_")
+            dest = os.path.join(web_dir, clean_basename)
+            shutil.copy2(abs_file, dest)
+            rel_path = f"web_media/{clean_basename}"
     except Exception as copy_err:
         print(f"   > ⚠️ Self-host media copy notice: {copy_err}")
         return None
 
     start_ec2_media_server()
 
+    import urllib.parse
+    parts = rel_path.split("/")
+    encoded_parts = [urllib.parse.quote(p) for p in parts]
+    encoded_rel_path = "/".join(encoded_parts)
+
+    # 1. Try Cloudflare HTTPS Tunnel URL (Bypasses EC2 port 8080 inbound firewall restrictions)
+    tunnel_url = get_cloudflare_tunnel_url(SERVER_PORT)
+    if tunnel_url:
+        https_url = f"{tunnel_url}/{encoded_rel_path}"
+        print(f"   > 🔒 Self-Hosted HTTPS Tunnel Direct URL: {https_url}")
+        return https_url
+
+    # 2. Fallback to Direct EC2 Public IP URL
     public_ip = get_ec2_public_ip()
     if public_ip:
-        self_hosted_url = f"http://{public_ip}:{SERVER_PORT}/{rel_path}"
+        self_hosted_url = f"http://{public_ip}:{SERVER_PORT}/{encoded_rel_path}"
         print(f"   > 🚀 Self-Hosted EC2 Direct URL: {self_hosted_url}")
         return self_hosted_url
 
@@ -257,17 +329,18 @@ def upload_to_facebook(video_path, caption, page_id, token):
     except Exception as e:
         print(f"   > ❌ FB Exception: {e}")
 
-def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=None, thumbnail_path=None):
-    if not video_url: return
+def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=None, thumbnail_path=None, local_raw_path=None):
+    if not video_url: return False
     
     # Support client.clip_upload-like calls with positional/keyword parameters
     # If a local path is passed, host it temporarily
     if os.path.exists(video_url):
+        local_raw_path = video_url
         print(f"   > 🌐 Local video path detected. Hosting for Meta Graph API...")
         video_url = get_temp_url(video_url)
         if not video_url:
             print("   > ❌ Error: Failed to generate temporary public URL for local video.")
-            return
+            return False
 
     # If the third parameter is a local file path passed positionally (for thumbnail_path)
     if ig_id and isinstance(ig_id, str) and (ig_id.endswith(".jpg") or ig_id.endswith(".png") or os.path.exists(ig_id)):
@@ -299,7 +372,7 @@ def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=No
 
     if not ig_id or not token:
         print("   > ❌ Instagram upload failed: Missing ig_account_id or fb_token credentials.")
-        return
+        return False
 
     print(f"   > 🌐 Connecting to Instagram: {ig_id}...")
     try:
@@ -331,20 +404,44 @@ def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=No
                 elif status_code == 'ERROR':
                     err_details = status_res.get('status', status_res)
                     print(f"   > ❌ IG Processing Failed. Meta Status: {err_details}")
-                    return
+                    if local_raw_path and os.path.exists(local_raw_path):
+                        try:
+                            print(f"   > 🧹 Auto-cleaning failed render file to free disk space: {os.path.basename(local_raw_path)}")
+                            os.remove(local_raw_path)
+                        except Exception as clean_e:
+                            print(f"   > ⚠️ Notice: Failed to remove bad file: {clean_e}")
+                    return False
             if not is_ready:
                 print("   > ⏱️ IG Processing Timed Out after 15 attempts.")
-                return
+                if local_raw_path and os.path.exists(local_raw_path):
+                    try:
+                        print(f"   > 🧹 Auto-cleaning timed-out render file to free disk space: {os.path.basename(local_raw_path)}")
+                        os.remove(local_raw_path)
+                    except Exception as clean_e:
+                        pass
+                return False
             
             publish_url = f"https://graph.facebook.com/v19.0/{ig_id}/media_publish"
             publish_payload = {'creation_id': container_id, 'access_token': token}
-            pub_res = requests.post(publish_url, data=payload).json() if False else requests.post(publish_url, data=publish_payload).json()
-            if 'id' in pub_res: print(f"   > ✅ IG Reel Published Successfully!")
-            else: print(f"   > ❌ IG Publish Error: {pub_res}")
+            pub_res = requests.post(publish_url, data=publish_payload).json()
+            if 'id' in pub_res:
+                print(f"   > ✅ IG Reel Published Successfully!")
+                return True
+            else:
+                print(f"   > ❌ IG Publish Error: {pub_res}")
+                return False
         else:
             print(f"   > ❌ IG Container Creation Error: {res}")
+            if local_raw_path and os.path.exists(local_raw_path):
+                try:
+                    print(f"   > 🧹 Auto-cleaning invalid container render file to free disk space: {os.path.basename(local_raw_path)}")
+                    os.remove(local_raw_path)
+                except Exception as clean_e:
+                    pass
+            return False
     except Exception as e:
         print(f"   > ❌ IG Exception: {e}")
+        return False
 
 def get_authenticated_youtube_service(token_path):
     if not token_path:
@@ -554,7 +651,7 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
     if settings.get("enable_ig", True):
         if settings.get("ig_account_id") and settings.get("fb_token"):
             direct_url = get_temp_url(video_path)
-            upload_to_instagram(direct_url, caption, settings["ig_account_id"], settings["fb_token"], cover_url=thumb_url, thumbnail_path=thumbnail_path)
+            upload_to_instagram(direct_url, caption, settings["ig_account_id"], settings["fb_token"], cover_url=thumb_url, thumbnail_path=thumbnail_path, local_raw_path=video_path)
         else:
             print("   > ⏭️ Skipping Instagram (Missing Token or IG ID)")
     else:
