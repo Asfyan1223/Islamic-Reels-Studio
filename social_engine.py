@@ -74,20 +74,118 @@ def build_caption(quran_data, cta_text="", reciter_name=""):
     caption += "#Quran #IslamicReels #QuranRecitation #Islam #Muslim #DailyAyah #QuranQuotes #Deen #Allah #Shorts"
     return caption
 
+import shutil
+import http.server
+import socketserver
+import threading
+
+# --- SELF-HOSTED EC2 MEDIA SERVER MODULE ---
+SERVER_PORT = 8080
+_ec2_server_instance = None
+_ec2_server_thread = None
+_ec2_public_ip = None
+
+class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+
+class QuietMediaHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        output_dir = os.path.join(app_data_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        super().__init__(*args, directory=output_dir, **kwargs)
+        
+    def log_message(self, format, *args):
+        pass
+
+def get_ec2_public_ip():
+    global _ec2_public_ip
+    if _ec2_public_ip: return _ec2_public_ip
+    providers = [
+        "https://api.ipify.org",
+        "https://ifconfig.me/ip",
+        "https://icanhazip.com",
+        "https://checkip.amazonaws.com"
+    ]
+    for url in providers:
+        try:
+            res = requests.get(url, timeout=3)
+            if res.status_code == 200:
+                ip = res.text.strip()
+                if ip and len(ip.split('.')) == 4:
+                    _ec2_public_ip = ip
+                    return ip
+        except Exception:
+            continue
+    return None
+
+def start_ec2_media_server():
+    global _ec2_server_instance, _ec2_server_thread
+    if _ec2_server_instance is not None:
+        return SERVER_PORT
+
+    try:
+        _ec2_server_instance = ThreadingHTTPServer(("0.0.0.0", SERVER_PORT), QuietMediaHandler)
+        _ec2_server_thread = threading.Thread(target=_ec2_server_instance.serve_forever, daemon=True)
+        _ec2_server_thread.start()
+        print(f"   > 🌐 EC2 Self-Hosted Media Server STARTED on Port {SERVER_PORT}")
+        return SERVER_PORT
+    except Exception as e:
+        print(f"   > ⚠️ Self-hosted server notice on port {SERVER_PORT}: {e}")
+        return SERVER_PORT
+
+def get_self_hosted_media_url(file_path):
+    if not file_path or not os.path.exists(file_path):
+        return None
+
+    output_dir = os.path.join(app_data_dir, "output")
+    os.makedirs(output_dir, exist_ok=True)
+
+    rel_path = None
+    try:
+        abs_file = os.path.abspath(file_path)
+        abs_output = os.path.abspath(output_dir)
+        if abs_file.startswith(abs_output):
+            rel_path = os.path.relpath(abs_file, abs_output).replace("\\", "/")
+        else:
+            web_dir = os.path.join(output_dir, "web_media")
+            os.makedirs(web_dir, exist_ok=True)
+            dest = os.path.join(web_dir, os.path.basename(file_path))
+            shutil.copy2(file_path, dest)
+            rel_path = f"web_media/{os.path.basename(file_path)}"
+    except Exception as copy_err:
+        print(f"   > ⚠️ Self-host media copy notice: {copy_err}")
+        return None
+
+    start_ec2_media_server()
+
+    public_ip = get_ec2_public_ip()
+    if public_ip:
+        self_hosted_url = f"http://{public_ip}:{SERVER_PORT}/{rel_path}"
+        print(f"   > 🚀 Self-Hosted EC2 Direct URL: {self_hosted_url}")
+        return self_hosted_url
+
+    return None
+
 def get_temp_url(file_path):
-    print("   > ☁️ Uploading to Temp Server for direct Meta Transfer...")
+    print("   > ☁️ Generating Direct Media URL for Meta Transfer...")
+
+    # 1. PRIMARY (PERMANENT FIX): Self-Hosted EC2 HTTP Direct Stream (Zero 3rd Party Dependency)
+    try:
+        ec2_url = get_self_hosted_media_url(file_path)
+        if ec2_url:
+            return ec2_url
+    except Exception as ec2_err:
+        print(f"   > ⚠️ Self-hosted EC2 Media Server Notice: {ec2_err}")
+
+    # 2. FALLBACK 1: Catbox.moe CDN
     raw_name = os.path.basename(file_path)
     name_base, ext = os.path.splitext(raw_name)
-    
-    # Ensure filename is padded (Tmpfiles rejects single/short names like 7.jpg or 4.jpg)
     clean_base = "".join([c for c in name_base if c.isalnum() or c in "_-"])
     if not clean_base or len(clean_base) < 4:
         filename = f"islamic_reels_media_{clean_base or 'asset'}{ext.lower()}"
     else:
         filename = f"islamic_reels_{clean_base}{ext.lower()}"
 
-    # 1. Try Catbox.moe (Primary - Direct High-Speed CDN URL)
-    # Note: Do not send custom User-Agent headers to avoid HTTP 412 Invalid Uploader error
     try:
         with open(file_path, 'rb') as f:
             res = requests.post(
@@ -105,7 +203,7 @@ def get_temp_url(file_path):
     except Exception as e:
         print(f"   > ⚠️ Primary Host Notice (Catbox): {e}")
 
-    # 2. Try Litterbox (Catbox 1-Hour Temporary Host Failsafe)
+    # 3. FALLBACK 2: Litterbox CDN
     try:
         with open(file_path, 'rb') as f:
             res = requests.post(
@@ -123,7 +221,7 @@ def get_temp_url(file_path):
     except Exception as e:
         print(f"   > ⚠️ Litterbox Host Notice: {e}")
 
-    # 3. Try Tmpfiles.org with Padded Filename Failsafe
+    # 4. FALLBACK 3: Tmpfiles.org
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
         with open(file_path, 'rb') as f:
@@ -138,8 +236,6 @@ def get_temp_url(file_path):
                 direct_url = url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
                 print(f"   > ✅ Uploaded to Tmpfiles: {direct_url}")
                 return direct_url
-            else:
-                print(f"   > ⚠️ Tmpfiles Notice: {res}")
     except Exception as e:
         print(f"   > ⚠️ Tmpfiles Host Notice: {e}")
 
