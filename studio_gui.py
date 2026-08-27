@@ -1452,6 +1452,12 @@ class IslamicReelsStudio(ctk.CTk):
     def run_pipeline(self, yt_active=True, insta_active=True, fb_active=True):
         print("========================================")
         
+        # 🔍 PRE-FLIGHT ENVIRONMENT & CLOUD HOSTING CHECK BEFORE GENERATION
+        try:
+            environment_precheck.run_environment_precheck(verbose=True)
+        except Exception as precheck_err:
+            print(f"⚠️ Notice: Pre-flight check notice: {precheck_err}")
+
         # 🔐 PRE-FLIGHT YOUTUBE TOKEN CHECK BEFORE COMPILING REELS
         if yt_active:
             self.precheck_all_youtube_tokens()

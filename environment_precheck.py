@@ -112,7 +112,27 @@ def run_environment_precheck(verbose=True):
     except Exception as net_err:
         warnings.append(f"Network API: Could not reach Quran Cloud API ({net_err}). Ensure internet connection is active.")
 
-    # 5. Output Summary Report
+    # 5. Cloud Media Hosting Precheck (Catbox / Litterbox CDN Upload Test)
+    try:
+        from social_engine import get_temp_url
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(b"\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xFF\xDB\x00C\x00")
+            tmp_path = tmp.name
+
+        test_url = get_temp_url(tmp_path)
+        if os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except: pass
+
+        if test_url and test_url.startswith("http"):
+            passed_items.append(f"Cloud Hosting API: Verified live media upload transfer ({test_url})")
+        else:
+            warnings.append("Cloud Hosting API: Temporary media upload test failed. Instagram upload may be affected.")
+    except Exception as host_err:
+        warnings.append(f"Cloud Hosting API: Temp host test notice: {host_err}")
+
+    # 6. Output Summary Report
     if verbose:
         print(f"✅ PASSED CHECKS: {len(passed_items)} item(s) verified.")
         for item in passed_items:

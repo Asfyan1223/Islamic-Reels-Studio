@@ -76,17 +76,24 @@ def build_caption(quran_data, cta_text="", reciter_name=""):
 
 def get_temp_url(file_path):
     print("   > ☁️ Uploading to Temp Server for direct Meta Transfer...")
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    filename = os.path.basename(file_path)
+    raw_name = os.path.basename(file_path)
+    name_base, ext = os.path.splitext(raw_name)
+    
+    # Ensure filename is padded (Tmpfiles rejects single/short names like 7.jpg or 4.jpg)
+    clean_base = "".join([c for c in name_base if c.isalnum() or c in "_-"])
+    if not clean_base or len(clean_base) < 4:
+        filename = f"islamic_reels_media_{clean_base or 'asset'}{ext.lower()}"
+    else:
+        filename = f"islamic_reels_{clean_base}{ext.lower()}"
 
     # 1. Try Catbox.moe (Primary - Direct High-Speed CDN URL)
+    # Note: Do not send custom User-Agent headers to avoid HTTP 412 Invalid Uploader error
     try:
         with open(file_path, 'rb') as f:
             res = requests.post(
                 "https://catbox.moe/user/api.php",
                 data={'reqtype': 'fileupload'},
                 files={'fileToUpload': (filename, f)},
-                headers=headers,
                 timeout=30
             )
             if res.status_code == 200 and res.text.strip().startswith("http"):
@@ -105,17 +112,19 @@ def get_temp_url(file_path):
                 "https://litterbox.catbox.moe/resources/internals/api.php",
                 data={'reqtype': 'fileupload', 'time': '1h'},
                 files={'fileToUpload': (filename, f)},
-                headers=headers,
                 timeout=30
             )
             if res.status_code == 200 and res.text.strip().startswith("http"):
                 url = res.text.strip()
                 print(f"   > ✅ Uploaded to Litterbox CDN: {url}")
                 return url
+            else:
+                print(f"   > ⚠️ Litterbox returned HTTP {res.status_code}: {res.text[:100]}")
     except Exception as e:
         print(f"   > ⚠️ Litterbox Host Notice: {e}")
 
-    # 3. Try Tmpfiles.org with Explicit Filename Tuple
+    # 3. Try Tmpfiles.org with Padded Filename Failsafe
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
         with open(file_path, 'rb') as f:
             res = requests.post(
