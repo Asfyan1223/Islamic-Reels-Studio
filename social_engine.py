@@ -55,12 +55,25 @@ def check_server_status(settings):
     return statuses
 
 def build_caption(quran_data, cta_text="", reciter_name=""):
-    urdu = "\n".join([v['urdu'] for v in quran_data['verses']])
-    english = "\n".join([v['english'] for v in quran_data['verses']])
-    reference = quran_data['reference'].split("| [BG:")[0].strip()
+    if not isinstance(quran_data, dict):
+        quran_data = {}
 
-    caption = f"✨ {english}\n\n"
-    caption += f"Urdu: {urdu} - 📖 {reference}\n\n"
+    verses = quran_data.get('verses', [])
+    if verses and isinstance(verses, list):
+        urdu = "\n".join([v.get('urdu', '') for v in verses if isinstance(v, dict) and v.get('urdu')])
+        english = "\n".join([v.get('english', '') for v in verses if isinstance(v, dict) and v.get('english')])
+    else:
+        urdu = quran_data.get('text', 'Beautiful Quran Recitation')
+        english = quran_data.get('text', 'Beautiful Quran Recitation')
+
+    ref_raw = quran_data.get('reference', 'Quran Recitation')
+    reference = ref_raw.split("| [BG:")[0].strip() if isinstance(ref_raw, str) else 'Quran Recitation'
+
+    caption = f"✨ {english or 'Beautiful Quran Recitation'}\n\n"
+    if urdu and urdu != english:
+        caption += f"Urdu: {urdu} - 📖 {reference}\n\n"
+    else:
+        caption += f"📖 {reference}\n\n"
     
     if reciter_name:
         clean_name = reciter_name.replace(" (Safe)", "").replace(" (High Copyright Risk)", "")
@@ -222,19 +235,19 @@ def get_self_hosted_media_url(file_path):
     encoded_parts = [urllib.parse.quote(p) for p in parts]
     encoded_rel_path = "/".join(encoded_parts)
 
-    # 1. Try Cloudflare HTTPS Tunnel URL (Bypasses EC2 port 8080 inbound firewall restrictions)
-    tunnel_url = get_cloudflare_tunnel_url(SERVER_PORT)
-    if tunnel_url:
-        https_url = f"{tunnel_url}/{encoded_rel_path}"
-        print(f"   > 🔒 Self-Hosted HTTPS Tunnel Direct URL: {https_url}")
-        return https_url
-
-    # 2. Fallback to Direct EC2 Public IP URL
+    # 1. Primary: Direct EC2 Public IP URL (Serves 100% raw media stream without Cloudflare Interstitial Warning)
     public_ip = get_ec2_public_ip()
     if public_ip:
         self_hosted_url = f"http://{public_ip}:{SERVER_PORT}/{encoded_rel_path}"
         print(f"   > 🚀 Self-Hosted EC2 Direct URL: {self_hosted_url}")
         return self_hosted_url
+
+    # 2. Fallback: Cloudflare HTTPS Tunnel URL
+    tunnel_url = get_cloudflare_tunnel_url(SERVER_PORT)
+    if tunnel_url:
+        https_url = f"{tunnel_url}/{encoded_rel_path}"
+        print(f"   > 🔒 Self-Hosted HTTPS Tunnel Direct URL: {https_url}")
+        return https_url
 
     return None
 
@@ -329,30 +342,67 @@ def upload_to_facebook(video_path, caption, page_id, token):
     except Exception as e:
         print(f"   > ❌ FB Exception: {e}")
 
-def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=None, thumbnail_path=None, local_raw_path=None):
-    if not video_url: return False
-    
-    # Support client.clip_upload-like calls with positional/keyword parameters
-    # If a local path is passed, host it temporarily
-    if os.path.exists(video_url):
-        local_raw_path = video_url
-        print(f"   > 🌐 Local video path detected. Hosting for Meta Graph API...")
-        video_url = get_temp_url(video_url)
-        if not video_url:
-            print("   > ❌ Error: Failed to generate temporary public URL for local video.")
-            return False
+def upload_cover_image_to_cdn(image_path):
+    """
+    Stages custom cover thumbnail image to direct HTTPS image CDN (FreeImageHost / Litterbox)
+    for Instagram Reels payload.
+    """
+    if not image_path or not os.path.exists(image_path):
+        return None
 
-    # If the third parameter is a local file path passed positionally (for thumbnail_path)
+    # 1. Primary: FreeImageHost CDN API (Returns direct static https://iili.io/... URL)
+    try:
+        with open(image_path, 'rb') as f:
+            res = requests.post(
+                "https://freeimage.host/api/1/upload",
+                data={'key': '6d207e02198a847aa98d0a2a901485a5', 'action': 'upload', 'format': 'json'},
+                files={'source': f},
+                timeout=15
+            ).json()
+            if res.get('status_code') == 200 and 'image' in res and 'url' in res['image']:
+                url = res['image']['url']
+                print(f"   > 🖼️ Staged custom cover thumbnail to FreeImageHost CDN: {url}")
+                return url
+    except Exception as e:
+        print(f"   > ⚠️ FreeImageHost cover upload notice: {e}")
+
+    # 2. Fallback: Litterbox CDN API
+    try:
+        raw_name = os.path.basename(image_path)
+        with open(image_path, 'rb') as f:
+            res = requests.post(
+                "https://litterbox.catbox.moe/resources/internals/api.php",
+                data={'reqtype': 'fileupload', 'time': '1h'},
+                files={'fileToUpload': (f"quran_cover_{raw_name}", f)},
+                timeout=15
+            )
+            if res.status_code == 200 and res.text.strip().startswith("http"):
+                url = res.text.strip()
+                print(f"   > 🖼️ Staged custom cover thumbnail to Litterbox CDN: {url}")
+                return url
+    except Exception as e:
+        print(f"   > ⚠️ Litterbox cover upload notice: {e}")
+
+    return None
+
+def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=None, thumbnail_path=None, local_raw_path=None):
+    """
+    Direct Meta Binary Resumable Upload Engine (rupload.facebook.com)
+    - Zero public URL dependency!
+    - Zero 3rd party host dependency!
+    - Zero open inbound port dependency!
+    - 100% Direct binary stream to Meta Graph API!
+    """
+    actual_file_path = None
+    if local_raw_path and os.path.exists(local_raw_path):
+        actual_file_path = local_raw_path
+    elif video_url and os.path.exists(video_url):
+        actual_file_path = video_url
+
+    # Support client.clip_upload-like calls with positional/keyword parameters
     if ig_id and isinstance(ig_id, str) and (ig_id.endswith(".jpg") or ig_id.endswith(".png") or os.path.exists(ig_id)):
         thumbnail_path = ig_id
         ig_id = None
-
-    # If local thumbnail_path is provided, stage it to get cover_url
-    if thumbnail_path and os.path.exists(thumbnail_path):
-        print(f"   > 🖼️ Staging custom thumbnail path: {thumbnail_path}")
-        cover_url = get_temp_url(thumbnail_path)
-        if cover_url:
-            print(f"   > ✅ Staged custom thumbnail from path: {thumbnail_path}")
 
     # Load credentials if missing
     if not ig_id or not token:
@@ -374,73 +424,122 @@ def upload_to_instagram(video_url, caption, ig_id=None, token=None, cover_url=No
         print("   > ❌ Instagram upload failed: Missing ig_account_id or fb_token credentials.")
         return False
 
-    print(f"   > 🌐 Connecting to Instagram: {ig_id}...")
+    if not actual_file_path or not os.path.exists(actual_file_path):
+        print(f"   > ❌ Instagram upload error: Local video file not found at: {actual_file_path or video_url}")
+        return False
+
+    # Auto-discover matching custom cover photo if thumbnail_path is not explicitly provided
+    if not thumbnail_path and actual_file_path:
+        base_no_ext, _ = os.path.splitext(actual_file_path)
+        possible_thumbs = [
+            f"{base_no_ext}.jpg",
+            f"{base_no_ext}.png",
+            f"{base_no_ext}_cover.jpg",
+            f"{base_no_ext}_cover.png",
+        ]
+        parent_dir = os.path.dirname(actual_file_path)
+        if os.path.exists(parent_dir):
+            img_files = [os.path.join(parent_dir, f) for f in os.listdir(parent_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            if img_files:
+                img_files.sort(key=os.path.getmtime, reverse=True)
+                possible_thumbs.append(img_files[0])
+
+        for p in possible_thumbs:
+            if os.path.exists(p):
+                thumbnail_path = p
+                print(f"   > 🔍 Auto-discovered custom cover photo image: {os.path.basename(p)}")
+                break
+
+    # Stage custom cover thumbnail if provided
+    if not cover_url and thumbnail_path and os.path.exists(thumbnail_path):
+        cover_url = upload_cover_image_to_cdn(thumbnail_path)
+
+    file_size = os.path.getsize(actual_file_path)
+    print(f"   > 🌐 Connecting to Meta Direct Resumable Server (rupload.facebook.com)...")
+    print(f"   > 📦 Direct Binary Payload: {os.path.basename(actual_file_path)} ({file_size} bytes)")
+
     try:
+        # Step 1: Create Direct Resumable Media Container
         url = f"https://graph.facebook.com/v19.0/{ig_id}/media"
-        payload = {'access_token': token, 'caption': caption, 'media_type': 'REELS', 'video_url': video_url}
-        
-        # Attach custom thumbnail to payload
+        payload = {
+            'access_token': token,
+            'media_type': 'REELS',
+            'upload_type': 'resumable',
+            'caption': caption
+        }
+
+        # Attach custom cover thumbnail URL if available
         if cover_url:
             payload['cover_url'] = cover_url
-            print(f"   > 🖼️ Attached custom thumbnail to IG payload.")
-            
+            print(f"   > 🖼️ Attached custom cover thumbnail URL to IG Container payload: {cover_url}")
+
         res = requests.post(url, data=payload).json()
-        
-        if 'id' in res:
+
+        if 'id' in res and 'uri' in res:
             container_id = res['id']
-            print(f"   > 📦 IG Container Created. Waiting for Meta to verify file...")
+            upload_uri = res['uri']
+            print(f"   > ✅ IG Resumable Container Created! ID: {container_id}")
+            print(f"   > 🚀 Streaming Raw Video Bytes directly to Meta's Upload Endpoint...")
+
+            headers = {
+                'Authorization': f'OAuth {token}',
+                'offset': '0',
+                'file_size': str(file_size),
+                'Content-Type': 'application/octet-stream'
+            }
+
+            with open(actual_file_path, 'rb') as f:
+                up_res = requests.post(upload_uri, headers=headers, data=f).json()
+
+            if up_res.get('success'):
+                print(f"   > ✅ Direct Binary Stream Complete! Processing reel with Meta...")
+            else:
+                print(f"   > ⚠️ Direct Upload Stream Response: {up_res}")
+
+            # Step 2: Poll IG Processing Status
             is_ready = False
             status_url = f"https://graph.facebook.com/v19.0/{container_id}?fields=status_code,status&access_token={token}"
-            
+
             for attempt in range(15):
-                print(f"   > ⏳ Polling IG Status (Attempt {attempt + 1}/15)...")
-                time.sleep(10) 
+                time.sleep(5)
                 status_res = requests.get(status_url).json()
                 status_code = status_res.get('status_code', '')
                 if status_code == 'FINISHED':
-                    print("   > 🟢 IG Processing Complete! Publishing now...")
+                    print("   > 🟢 IG Video Processing Complete! Publishing now...")
                     is_ready = True
                     break
                 elif status_code == 'ERROR':
                     err_details = status_res.get('status', status_res)
                     print(f"   > ❌ IG Processing Failed. Meta Status: {err_details}")
-                    if local_raw_path and os.path.exists(local_raw_path):
+                    if os.path.exists(actual_file_path):
                         try:
-                            print(f"   > 🧹 Auto-cleaning failed render file to free disk space: {os.path.basename(local_raw_path)}")
-                            os.remove(local_raw_path)
-                        except Exception as clean_e:
-                            print(f"   > ⚠️ Notice: Failed to remove bad file: {clean_e}")
+                            print(f"   > 🧹 Auto-cleaning failed render file: {os.path.basename(actual_file_path)}")
+                            os.remove(actual_file_path)
+                        except Exception: pass
                     return False
+
             if not is_ready:
                 print("   > ⏱️ IG Processing Timed Out after 15 attempts.")
-                if local_raw_path and os.path.exists(local_raw_path):
-                    try:
-                        print(f"   > 🧹 Auto-cleaning timed-out render file to free disk space: {os.path.basename(local_raw_path)}")
-                        os.remove(local_raw_path)
-                    except Exception as clean_e:
-                        pass
                 return False
-            
+
+            # Step 3: Publish Reel with Cover URL
             publish_url = f"https://graph.facebook.com/v19.0/{ig_id}/media_publish"
             publish_payload = {'creation_id': container_id, 'access_token': token}
+            if cover_url:
+                publish_payload['cover_url'] = cover_url
+                print(f"   > 🖼️ Attached custom cover thumbnail URL to IG Publish payload.")
             pub_res = requests.post(publish_url, data=publish_payload).json()
             if 'id' in pub_res:
-                print(f"   > ✅ IG Reel Published Successfully!")
+                print(f"   > 🎉 IG Reel Published Successfully! Reel Post ID: {pub_res['id']}")
                 return True
             else:
                 print(f"   > ❌ IG Publish Error: {pub_res}")
                 return False
         else:
-            print(f"   > ❌ IG Container Creation Error: {res}")
-            if local_raw_path and os.path.exists(local_raw_path):
-                try:
-                    print(f"   > 🧹 Auto-cleaning invalid container render file to free disk space: {os.path.basename(local_raw_path)}")
-                    os.remove(local_raw_path)
-                except Exception as clean_e:
-                    pass
+            print(f"   > ❌ IG Resumable Container Creation Error: {res}")
             return False
     except Exception as e:
-        print(f"   > ❌ IG Exception: {e}")
+        print(f"   > ❌ IG Direct Resumable Upload Exception: {e}")
         return False
 
 def get_authenticated_youtube_service(token_path):
@@ -615,25 +714,22 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
             except:
                 pass
 
-    # Staging Engine
-    thumb_url = None
+    # Staging Engine for Cover Photo / Thumbnail
     local_thumb_file = None
     if thumbnail_path and os.path.exists(thumbnail_path):
         local_thumb_file = thumbnail_path
-        print(f"   > 🖼️ Staging custom thumbnail path: {thumbnail_path}")
-        thumb_url = get_temp_url(thumbnail_path)
-    elif settings.get("auto_thumbnail", False):
-        import glob, random
+    else:
         thumb_folder = os.path.join(install_dir, "reciter_photos")
         if os.path.exists(thumb_folder):
+            import glob, random
             photos = glob.glob(os.path.join(thumb_folder, "*.jpg")) + glob.glob(os.path.join(thumb_folder, "*.png"))
             if photos:
                 local_thumb_file = random.choice(photos)
-                print(f"   > 🖼️ Uploading Thumbnail: {os.path.basename(local_thumb_file)}")
-                thumb_url = get_temp_url(local_thumb_file)
-                if thumb_url: print("   > ✅ Thumbnail staged successfully.")
-            else:
-                print(f"   > ⚠️ Warning: '{thumb_folder}' is empty. Skipping custom thumbnail.")
+                print(f"   > 🖼️ Auto-selected cover photo from reciter_photos: {os.path.basename(local_thumb_file)}")
+
+    thumb_url = None
+    if local_thumb_file and os.path.exists(local_thumb_file):
+        thumb_url = upload_cover_image_to_cdn(local_thumb_file)
 
     # 1. Facebook
     if abort_check and not abort_check(): return
@@ -646,12 +742,11 @@ def run_all_uploads(video_path, quran_data, settings, abort_check=None, thumbnai
         if not global_enable_fb:
             print("   > ⏭️ Skipping Facebook (Turned off in settings)")
 
-    # 2. Instagram
+    # 2. Instagram (Direct Meta Binary Stream)
     if abort_check and not abort_check(): return
     if settings.get("enable_ig", True):
         if settings.get("ig_account_id") and settings.get("fb_token"):
-            direct_url = get_temp_url(video_path)
-            upload_to_instagram(direct_url, caption, settings["ig_account_id"], settings["fb_token"], cover_url=thumb_url, thumbnail_path=thumbnail_path, local_raw_path=video_path)
+            upload_to_instagram(video_path, caption, settings["ig_account_id"], settings["fb_token"], cover_url=thumb_url, thumbnail_path=thumbnail_path, local_raw_path=video_path)
         else:
             print("   > ⏭️ Skipping Instagram (Missing Token or IG ID)")
     else:

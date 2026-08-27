@@ -519,13 +519,13 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
         final_video = final_video.set_audio(final_audio)
         final_video = final_video.set_duration(final_video_duration) 
         
-        render_preset = "ultrafast" 
+        import hardware_optimizer
+        hw_cfg = hardware_optimizer.get_optimal_render_config(cpu_core_limit)
+        render_threads = hw_cfg["threads"]
+        render_preset = hw_cfg["preset"]
         fixed_bitrate = "6000k"
-        import multiprocessing
-        max_cores = multiprocessing.cpu_count()
 
-        render_threads = 1
-        print("   > ⚙️ CPU Profile: 1 CORE (Forced for 2GB RAM Optimization) | Quality: 1080p HD")
+        print(f"   > ⚙️ Hardware Acceleration Engine: {hw_cfg['desc']} | Preset: {render_preset.upper()}")
 
         custom_logger = CancelableLogger(abort_check)
         temp_audio_name = os.path.join(TEMP_DIR, f"temp_audio_{random.randint(100000, 999999)}.mp4")
@@ -534,7 +534,7 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
             output_filename, fps=30, codec="libx264", audio_codec="aac",
             bitrate=fixed_bitrate, preset=render_preset, threads=render_threads,
             logger=custom_logger, temp_audiofile=temp_audio_name, remove_temp=False,
-            ffmpeg_params=["-max_muxing_queue_size", "256", "-preset", "ultrafast"]
+            ffmpeg_params=["-max_muxing_queue_size", "256", "-preset", render_preset]
         )
         print(f"   > ✅ Video successfully rendered: {output_filename}")
         success = True

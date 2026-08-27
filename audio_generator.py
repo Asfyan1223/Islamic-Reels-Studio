@@ -45,15 +45,26 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 _whisper_model = None
 def get_whisper_model():
-    """Lazily load the Whisper model into RAM only when needed to save memory."""
+    """Lazily load the Whisper model into RAM/GPU based on hardware detection."""
     global _whisper_model
     if _whisper_model is None and WhisperModel is not None:
-        print("   > 🧠 Initializing Whisper AI Engine (Int8 CPU Optimized)...")
         try:
-            _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=1)
+            import hardware_optimizer
+            w_cfg = hardware_optimizer.get_optimal_whisper_config()
+            print(f"   > 🧠 Initializing Whisper AI Engine (Model '{w_cfg['model']}', Device: {w_cfg['device'].upper()}, Threads: {w_cfg['cpu_threads']})...")
+            _whisper_model = WhisperModel(
+                w_cfg["model"],
+                device=w_cfg["device"],
+                compute_type=w_cfg["compute_type"],
+                cpu_threads=w_cfg["cpu_threads"]
+            )
         except Exception as e:
-            print(f"   > ⚠️ Whisper Init Error: {e}")
-            return None
+            print(f"   > ⚠️ Whisper Hardware Init Notice ({e}). Falling back to CPU Int8...")
+            try:
+                _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=1)
+            except Exception as fallback_e:
+                print(f"   > ❌ Whisper Fallback Error: {fallback_e}")
+                return None
     return _whisper_model
 
 def apply_acoustic_profile(audio_path, profile_name):
