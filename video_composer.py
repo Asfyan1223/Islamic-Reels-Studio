@@ -36,6 +36,20 @@ TEMP_DIR = os.path.join(app_data_dir, "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.chdir(app_data_dir)
 
+def cleanup_old_temp_files():
+    """Removes leftover temporary files from previous runs to save disk space on low-end systems."""
+    try:
+        patterns = ["temp_batch_*.html", "temp_ref_*.html", "api_cache_*.mp4", "chunk_*.png", "ref_text_*.png", "temp_audio_*.mp4", "test_render_*.mp4"]
+        for p in patterns:
+            for f in glob.glob(os.path.join(TEMP_DIR, p)):
+                try: os.remove(f)
+                except: pass
+    except Exception:
+        pass
+
+# Run initial disk cleanup on startup
+cleanup_old_temp_files()
+
 hti = Html2Image(
     output_path=TEMP_DIR, 
     custom_flags=[
@@ -46,7 +60,12 @@ hti = Html2Image(
         '--disable-gpu',                
         '--disable-dev-shm-usage',      
         '--disable-software-rasterizer',
-        '--headless'  
+        '--disable-gpu-compositing',
+        '--disable-gpu-rasterization',
+        '--log-level=3',
+        '--silent',
+        '--headless',
+        '--allow-file-access-from-files'
     ]
 )
 
@@ -63,17 +82,22 @@ elif os.path.exists(edge_path):
 
 def get_all_background_files():
     search_dirs = [
+        os.path.join(install_dir, "bg"),
         os.path.join(install_dir, "backgrounds"),
+        os.path.join(os.getcwd(), "bg"),
         os.path.join(os.getcwd(), "backgrounds"),
+        "bg",
         "backgrounds",
+        os.path.join(app_data_dir, "bg"),
         os.path.join(app_data_dir, "backgrounds")
     ]
     extensions = ["*.mp4", "*.MP4", "*.mov", "*.MOV", "*.mkv", "*.MKV", "*.avi", "*.webm"]
     found = []
     for d in search_dirs:
-        if os.path.exists(d):
+        if os.path.exists(d) and os.path.isdir(d):
             for ext in extensions:
                 found.extend(glob.glob(os.path.join(d, ext)))
+                found.extend(glob.glob(os.path.join(d, "**", ext), recursive=True))
     seen = set()
     unique_videos = []
     for f in found:
@@ -150,7 +174,29 @@ def fetch_api_background(pixabay_key, pexels_key):
             print(f"   > ⚠️ Live API streaming error ({error}). Triggering immediate local fallback sequence...")
     return None
 
-def build_master_background(total_duration, enable_hook=True, enable_dynamic=True, use_online_clips=False, pixabay_key="", pexels_key=""):
+def build_master_background(total_duration, enable_hook=True, enable_dynamic=True, use_online_clips=False, pixabay_key="", pexels_key="", preselected_bg=None):
+    print("   > 🎞️ Assembling Background Track...")
+
+    # 🌟 Semantic Fast-Path: use the pre-selected themed video from news_gatherer
+    if preselected_bg and os.path.exists(preselected_bg):
+        print(f"   > 🎯 Loading Pre-Selected Semantic Video: {os.path.basename(preselected_bg)}")
+        bg_clip = VideoFileClip(preselected_bg).without_audio()
+        bg_clip = crop_to_9_16(bg_clip)
+        video_duration = bg_clip.duration
+
+        if bg_clip.duration <= 25.0 and total_duration > bg_clip.duration:
+            print(f"   > 🔄 Video ({bg_clip.duration:.1f}s) triggered loop to cover audio ({total_duration:.1f}s).")
+            bg_clip = bg_clip.fx(vfx.loop, duration=total_duration)
+        elif total_duration > bg_clip.duration:
+            # Absolute safety net: catches math variances for unlooped long videos
+            bg_clip = bg_clip.fx(vfx.loop, duration=total_duration)
+        else:
+            print(f"   > ✂️ No loop needed. Trimming video ({bg_clip.duration:.1f}s) to match audio ({total_duration:.1f}s).")
+            bg_clip = bg_clip.subclip(0, total_duration)
+
+        return bg_clip, os.path.basename(preselected_bg), []
+
+    # --- Original fallback pipeline (hook clips + local/API stitching) ---
     print("   > 🎞️ Assembling Dynamic Background Track...")
     clips_to_concat = []
     cut_times = []
@@ -345,41 +391,88 @@ def batch_create_text_images_via_html(chunks_data, font_path, sub_font_path, eng
     return [os.path.join(TEMP_DIR, f) for f in output_filenames]
 
 def create_reference_badge_via_html(reference_text, font_path, ref_font_path, ref_text_color, ref_font_size_px, ref_bg_opacity, width=1080, height=250, output_filename="ref_text.png"):
-    abs_ref_font_path = os.path.abspath(ref_font_path).replace("\\", "/")
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <style>
-        @font-face {{ font-family: 'RefFont'; src: url('file:///{abs_ref_font_path}'); }}
-        body {{
-            background-color: transparent; margin: 0;
-            display: flex; justify-content: center; align-items: center;
-            height: {height}px; width: {width}px; overflow: hidden;
-        }}
-        .reference-badge {{
-            font-family: 'RefFont', system-ui, sans-serif; font-size: {ref_font_size_px}px; 
-            font-weight: 600; color: {ref_text_color}; letter-spacing: 3px; 
-            background: rgba(0, 0, 0, {ref_bg_opacity}); padding: 8px 25px; border-radius: 50px; 
-            box-shadow: 0px 5px 15px rgba(0,0,0,0.3); text-align: center; max-width: 85%;
-        }}
-    </style>
-    </head>
-    <body>
-        <div class="reference-badge">{reference_text}</div>
-    </body>
-    </html>
-    """
-    temp_html_path = os.path.join(TEMP_DIR, f"temp_ref_{random.randint(10000, 99999)}.html")
-    with open(temp_html_path, "w", encoding="utf-8") as f:
-        f.write(html_content)
-    hti.screenshot(html_file=temp_html_path, save_as=output_filename, size=(width, height))
-    if os.path.exists(temp_html_path):
-        os.remove(temp_html_path)
-    return os.path.join(TEMP_DIR, output_filename)
+    out_path = os.path.join(TEMP_DIR, output_filename)
+    # 🌟 OPTIMIZATION: Ultra-fast PIL direct rendering (eliminates 2nd Chrome startup & ~150MB peak RAM)
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        try:
+            font = ImageFont.truetype(ref_font_path, int(ref_font_size_px))
+        except Exception:
+            font = ImageFont.load_default()
+            
+        bbox = draw.textbbox((0, 0), reference_text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        
+        pad_x = 28
+        pad_y = 10
+        badge_w = min(text_w + pad_x * 2, width * 0.85)
+        badge_h = text_h + pad_y * 2
+        
+        bx0 = int((width - badge_w) / 2)
+        by0 = int((height - badge_h) / 2)
+        bx1 = bx0 + int(badge_w)
+        by1 = by0 + int(badge_h)
+        radius = int(badge_h / 2)
+        
+        try:
+            opacity = float(ref_bg_opacity)
+        except Exception:
+            opacity = 0.5
+            
+        # Soft drop shadow
+        shadow_alpha = int(70 * opacity)
+        draw.rounded_rectangle([bx0, by0 + 3, bx1, by1 + 3], radius=radius, fill=(0, 0, 0, shadow_alpha))
+        
+        # Pill badge background
+        bg_alpha = int(255 * opacity)
+        draw.rounded_rectangle([bx0, by0, bx1, by1], radius=radius, fill=(0, 0, 0, bg_alpha))
+        
+        # Center reference text
+        draw.text((width / 2, height / 2), reference_text, font=font, fill=ref_text_color, anchor="mm")
+        
+        img.save(out_path, "PNG")
+        return out_path
+    except Exception as pil_err:
+        print(f"   > ⚠️ PIL Badge render failed: {pil_err}. Falling back to Chrome HTML.")
+        abs_ref_font_path = os.path.abspath(ref_font_path).replace("\\", "/")
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+            @font-face {{ font-family: 'RefFont'; src: url('file:///{abs_ref_font_path}'); }}
+            body {{
+                background-color: transparent; margin: 0;
+                display: flex; justify-content: center; align-items: center;
+                height: {height}px; width: {width}px; overflow: hidden;
+            }}
+            .reference-badge {{
+                font-family: 'RefFont', system-ui, sans-serif; font-size: {ref_font_size_px}px; 
+                font-weight: 600; color: {ref_text_color}; letter-spacing: 3px; 
+                background: rgba(0, 0, 0, {ref_bg_opacity}); padding: 8px 25px; border-radius: 50px; 
+                box-shadow: 0px 5px 15px rgba(0,0,0,0.3); text-align: center; max-width: 85%;
+            }}
+        </style>
+        </head>
+        <body>
+            <div class="reference-badge">{reference_text}</div>
+        </body>
+        </html>
+        """
+        temp_html_path = os.path.join(TEMP_DIR, f"temp_ref_{random.randint(10000, 99999)}.html")
+        with open(temp_html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        hti.screenshot(html_file=temp_html_path, save_as=output_filename, size=(width, height))
+        if os.path.exists(temp_html_path):
+            os.remove(temp_html_path)
+        return out_path
 
-def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_path, eng_font_path, ref_font_path, text_color, sub_text_color, eng_text_color, ref_text_color, font_size_px, sub_font_size_px, eng_font_size_px, ref_font_size_px, ref_bg_opacity, main_y_pos, ref_y_pos, output_filename="final_reel.mp4", bg_blur_enabled=False, bg_blur_intensity=15, cpu_core_limit="1 Core (Low-End PC/VPS)", subtitle_style="Karaoke (Word Glow)", abort_check=None, enable_reciter_hook=True, enable_dynamic_scenes=True, sfx_path="", cinematic_arabic_size=180, use_online_clips=False, pixabay_key="", pexels_key=""):
+def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_path, eng_font_path, ref_font_path, text_color, sub_text_color, eng_text_color, ref_text_color, font_size_px, sub_font_size_px, eng_font_size_px, ref_font_size_px, ref_bg_opacity, main_y_pos, ref_y_pos, output_filename="final_reel.mp4", bg_blur_enabled=False, bg_blur_intensity=15, cpu_core_limit="1 Core (Low-End PC/VPS)", subtitle_style="Karaoke (Word Glow)", abort_check=None, enable_reciter_hook=False, enable_dynamic_scenes=False, sfx_path="", cinematic_arabic_size=180, use_online_clips=False, pixabay_key="", pexels_key="", preselected_bg=None):
     print(f"\n--- 🎬 ASSEMBLING DYNAMIC 1080P REEL ---")
     
     audio_clips = []
@@ -405,7 +498,8 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
             enable_dynamic=enable_dynamic_scenes,
             use_online_clips=use_online_clips,
             pixabay_key=pixabay_key,
-            pexels_key=pexels_key
+            pexels_key=pexels_key,
+            preselected_bg=preselected_bg  # 🌟 Semantic video forwarded from caller
         )
 
         if enable_dynamic_scenes and sfx_path and os.path.isfile(sfx_path):
@@ -466,23 +560,15 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
                 display_start = chunk_start
                 display_duration = chunk_duration
                 
-                # 🌟 THE HARD TRIM LOGIC (Fixes the text stacking issue)
-                if enable_dynamic_scenes and enable_reciter_hook:
-                    if chunk_end <= 5.0:
-                        continue # Completely skips chunks that happen inside the 5-second hook
-                    elif chunk_start < 5.0:
-                        display_start = 5.0 # Forces overlapping chunks to start exactly at 5.0s
-                        display_duration = chunk_end - 5.0
-                
                 all_chunks_data.append({
                     "ar_words_list": ar_words_in_chunk,
-                    "ur_text": ur_chunk if not enable_dynamic_scenes else None,
-                    "eng_text": eng_chunk if not enable_dynamic_scenes else None,
+                    "ur_text": ur_chunk,
+                    "eng_text": eng_chunk,
                     "lang_mode": mode_for_html,
                     "output_filename": f"chunk_{idx}_{chunk_idx}_{random.randint(100,999)}.png",
                     "duration": display_duration,
                     "start_time": display_start,
-                    "active_font_size": cinematic_arabic_size if enable_dynamic_scenes else font_size_px
+                    "active_font_size": font_size_px
                 })
 
         if all_chunks_data:
@@ -523,18 +609,27 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
         hw_cfg = hardware_optimizer.get_optimal_render_config(cpu_core_limit)
         render_threads = hw_cfg["threads"]
         render_preset = hw_cfg["preset"]
-        fixed_bitrate = "6000k"
+        fixed_bitrate = hw_cfg.get("bitrate", "4500k")
+        bufsize = hw_cfg.get("bufsize", "2000k")
+        tune = hw_cfg.get("tune")
 
-        print(f"   > ⚙️ Hardware Acceleration Engine: {hw_cfg['desc']} | Preset: {render_preset.upper()}")
+        ffmpeg_params = ["-max_muxing_queue_size", "256", "-preset", render_preset, "-bufsize", bufsize]
+        if tune:
+            ffmpeg_params.extend(["-tune", tune])
+
+        print(f"   > ⚙️ Hardware Acceleration Engine: {hw_cfg['desc']} | Preset: {render_preset.upper()} | Bitrate: {fixed_bitrate}")
 
         custom_logger = CancelableLogger(abort_check)
         temp_audio_name = os.path.join(TEMP_DIR, f"temp_audio_{random.randint(100000, 999999)}.mp4")
 
+        # Trim memory right before launching heavy FFmpeg encoding
+        hardware_optimizer.trim_memory()
+
         final_video.write_videofile(
             output_filename, fps=30, codec="libx264", audio_codec="aac",
             bitrate=fixed_bitrate, preset=render_preset, threads=render_threads,
-            logger=custom_logger, temp_audiofile=temp_audio_name, remove_temp=False,
-            ffmpeg_params=["-max_muxing_queue_size", "256", "-preset", render_preset]
+            logger=custom_logger, temp_audiofile=temp_audio_name, remove_temp=True,
+            ffmpeg_params=ffmpeg_params
         )
         print(f"   > ✅ Video successfully rendered: {output_filename}")
         success = True
@@ -547,16 +642,28 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
             raise e
             
     finally:
-        print("   > 🧹 Closing all MoviePy clips to free server RAM...")
+        print("   > 🧹 Closing all MoviePy clips and freeing server RAM...")
         try:
-            if final_video: final_video.close()
-            if bg_clip: bg_clip.close()
-            if ref_clip: ref_clip.close()
-            if final_audio: final_audio.close()
-            for clip in audio_clips: clip.close()
-            for t_clip in text_clips: t_clip.close()
+            if 'final_video' in locals() and final_video: final_video.close()
+            if 'bg_clip' in locals() and bg_clip: bg_clip.close()
+            if 'ref_clip' in locals() and ref_clip: ref_clip.close()
+            if 'final_audio' in locals() and final_audio: final_audio.close()
+            for clip in audio_clips:
+                try: clip.close()
+                except: pass
+            for t_clip in text_clips:
+                try: t_clip.close()
+                except: pass
         except: pass
 
+        # Force garbage collection FIRST to release Windows file locks on ImageClips
+        try:
+            del text_clips, audio_clips
+        except: pass
+        import gc
+        gc.collect()
+
+        # Delete temporary PNGs now that file locks are released
         for temp_img in temp_images_to_delete:
             if os.path.exists(temp_img):
                 try: os.remove(temp_img)
@@ -566,12 +673,17 @@ def generate_cinematic_video(sequence_data, reference_text, font_path, sub_font_
             try: os.remove(temp_audio_name)
             except: pass
             
-        api_temp_files = glob.glob(os.path.join(TEMP_DIR, "api_cache_*.mp4"))
-        for api_file in api_temp_files:
-            try: os.remove(api_file)
-            except: pass
-            
-        import gc
-        gc.collect()
+        # Clean any remaining temp files in TEMP_DIR
+        for pattern in ["temp_batch_*.html", "temp_ref_*.html", "api_cache_*.mp4", "chunk_*.png", "ref_text_*.png", "temp_audio_*.mp4"]:
+            for f in glob.glob(os.path.join(TEMP_DIR, pattern)):
+                try: os.remove(f)
+                except: pass
+
+        # Release unused memory back to OS
+        try:
+            import hardware_optimizer
+            hardware_optimizer.trim_memory()
+        except:
+            gc.collect()
                 
     return success, bg_name

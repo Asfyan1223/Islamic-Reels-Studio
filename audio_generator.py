@@ -41,6 +41,17 @@ else:
 TEMP_DIR = os.path.join(base_dir, "temp_cache")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+def cleanup_temp_cache():
+    """Cleans up stale audio cache from previous runs to conserve disk space."""
+    try:
+        import glob
+        for f in glob.glob(os.path.join(TEMP_DIR, "*.*")):
+            try: os.remove(f)
+            except: pass
+    except: pass
+
+cleanup_temp_cache()
+
 # --- AI & AUDIO FX FUNCTIONS ---
 
 _whisper_model = None
@@ -124,8 +135,15 @@ def generate_word_timestamps(audio_path, text, duration):
         return fallback_timestamps
         
     try:
-        # 🌟 ACCURACY FIX: Force Whisper to lock onto Arabic ('ar')
-        segments, _ = model.transcribe(audio_path, word_timestamps=True, language="ar", condition_on_previous_text=False)
+        # 🌟 ACCURACY & SPEED FIX: Force Arabic ('ar') and enable Silero VAD (skips silent pauses, 30-50% faster)
+        segments, _ = model.transcribe(
+            audio_path,
+            word_timestamps=True,
+            language="ar",
+            condition_on_previous_text=False,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=300)
+        )
         ai_words = [word for segment in segments for word in segment.words]
         gc.collect()
         
@@ -199,7 +217,7 @@ def prepare_audio_timeline(verses_data, mode, acoustic_profile="Default (Raw Aud
         main_audio_path = None
         entry = {"surah_name": verse['surah_name'], "ayah_num": verse['ayah_num']}
 
-        if mode in ["Arabic Only", "Arabic + Urdu"]:
+        if mode == "Arabic Only":
             main_audio_path = download_arabic_audio(verse['audio_url'], ar_path)
             entry.update({"text": verse['arabic'], "eng_text": verse['english'], "lang": "arabic"})
             
@@ -213,7 +231,7 @@ def prepare_audio_timeline(verses_data, mode, acoustic_profile="Default (Raw Aud
             main_audio_path = en_path
             entry.update({"text": verse['english'], "eng_text": None, "lang": "english"})
             
-        elif mode == "Arabic Voice + Bilingual (Urdu)":
+        elif mode in ["Arabic + Urdu", "Arabic Voice + Bilingual (Urdu)"]:
             main_audio_path = download_arabic_audio(verse['audio_url'], ar_path)
             entry.update({"text": verse['arabic'], "sub_text": verse['urdu'], "eng_text": verse['english'], "lang": "bilingual"})
             
@@ -248,6 +266,11 @@ def prepare_audio_timeline(verses_data, mode, acoustic_profile="Default (Raw Aud
         sequence.append(entry)
         print(f"   > ✅ Added Ayah {verse['ayah_num']} (Video is now {current_total_duration:.1f}s / {MAX_TRUE_DURATION}s)")
             
+    try:
+        import hardware_optimizer
+        hardware_optimizer.trim_memory()
+    except:
+        pass
     return sequence
 
 def combined_chunk_text(raw_text, full_sub_text, full_eng_text, words_per_chunk=4):

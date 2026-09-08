@@ -69,17 +69,19 @@ def run_environment_precheck(verbose=True):
     else:
         base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    bg_dir = os.path.join(base_dir, "backgrounds")
-    if os.path.exists(bg_dir):
-        bg_files = []
-        for ext in ["*.mp4", "*.MP4", "*.mov", "*.MOV", "*.mkv", "*.MKV"]:
-            bg_files.extend(glob.glob(os.path.join(bg_dir, ext)))
-        if bg_files:
-            passed_items.append(f"Background Assets: Found {len(bg_files)} video clip(s)")
-        else:
-            warnings.append(f"Background directory '{bg_dir}' exists but contains no video clips. Dark failsafe background will be used if needed.")
+    bg_candidates = [os.path.join(base_dir, "bg"), os.path.join(base_dir, "backgrounds")]
+    bg_files = []
+    for b_dir in bg_candidates:
+        if os.path.exists(b_dir):
+            for ext in ["*.mp4", "*.MP4", "*.mov", "*.MOV", "*.mkv", "*.MKV"]:
+                bg_files.extend(glob.glob(os.path.join(b_dir, ext)))
+                bg_files.extend(glob.glob(os.path.join(b_dir, "**", ext), recursive=True))
+
+    bg_files = list(set(os.path.normpath(f) for f in bg_files))
+    if bg_files:
+        passed_items.append(f"Background Assets: Found {len(bg_files)} video clip(s)")
     else:
-        warnings.append(f"Background directory '{bg_dir}' is missing. Dark failsafe background will be used if needed.")
+        warnings.append("Background directory ('bg' or 'backgrounds') contains no video clips. Dark failsafe background will be used if needed.")
 
     reciter_dir = os.path.join(base_dir, "reciter_clips")
     if os.path.exists(reciter_dir):

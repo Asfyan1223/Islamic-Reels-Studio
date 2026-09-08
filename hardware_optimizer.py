@@ -89,34 +89,66 @@ def get_optimal_render_config(user_setting="Auto-Detect Hardware (Recommended)")
     if "1 Core" in str(user_setting):
         threads = 1
         preset = "ultrafast"
-        desc = "1 Core Forced (Low-RAM EC2 Profile)"
+        bitrate = "3500k"
+        bufsize = "1500k"
+        tune = "fastdecode"
+        desc = "1 Core Forced (Low-RAM / VPS Profile)"
     elif "Max Performance" in str(user_setting) or "Fast PC" in str(user_setting):
         threads = max(1, cpu_cores - 1) if cpu_cores > 1 else 1
         preset = "faster"
+        bitrate = "6000k"
+        bufsize = "3000k"
+        tune = None
         desc = f"Max Performance ({threads} Cores)"
     else: # Auto-Detect Hardware
         if profile == "HIGH_PERFORMANCE":
             threads = max(2, cpu_cores - 1)
             preset = "faster"
+            bitrate = "6000k"
+            bufsize = "3000k"
+            tune = None
             desc = f"Auto High Performance ({threads} Cores / {hw['ram_gb']}GB RAM)"
         elif profile == "BALANCED":
             threads = max(2, cpu_cores // 2)
             preset = "veryfast"
+            bitrate = "4500k"
+            bufsize = "2000k"
+            tune = "fastdecode"
             desc = f"Auto Balanced ({threads} Cores / {hw['ram_gb']}GB RAM)"
         else:
             threads = 1
             preset = "ultrafast"
+            bitrate = "3500k"
+            bufsize = "1500k"
+            tune = "fastdecode"
             desc = f"Auto Low Spec (1 Core / {hw['ram_gb']}GB RAM)"
 
     return {
         "threads": threads,
         "preset": preset,
+        "bitrate": bitrate,
+        "bufsize": bufsize,
+        "tune": tune,
         "desc": desc,
         "ram_gb": hw["ram_gb"],
         "cpu_cores": cpu_cores,
         "has_gpu": hw["has_gpu"],
         "gpu_name": hw["gpu_name"]
     }
+
+def trim_memory():
+    """
+    Forces Python garbage collection and trims process working set on Windows.
+    Safely releases unused physical memory back to the operating system.
+    """
+    try:
+        import gc
+        gc.collect()
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.kernel32.SetProcessWorkingSetSize(-1, ctypes.c_size_t(-1), ctypes.c_size_t(-1))
+    except Exception:
+        pass
 
 def get_optimal_whisper_config():
     """
